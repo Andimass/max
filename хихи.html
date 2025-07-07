@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <title>Квест начинается!</title>
+  <style>
+    body {
+      background-color: #f4f4f9;
+      font-family: 'Georgia', serif;
+      color: #333;
+      text-align: center;
+      padding: 50px;
+    }
+
+    h1 {
+      font-size: 32px;
+      margin-bottom: 30px;
+    }
+
+    p {
+      font-size: 24px;
+    }
+
+    .puzzle {
+      margin-top: 40px;
+      font-size: 28px;
+      letter-spacing: 2px;
+      font-weight: bold;
+    }
+
+    input[type="text"] {
+      padding: 10px;
+      font-size: 18px;
+      margin-top: 20px;
+      width: 300px;
+    }
+
+    button {
+      padding: 10px 20px;
+      font-size: 18px;
+      margin-left: 10px;
+      cursor: pointer;
+    }
+
+    .message {
+      margin-top: 20px;
+      font-size: 20px;
+      font-weight: bold;
+      color: #c00;
+    }
+
+    .link {
+      margin-top: 20px;
+      font-size: 20px;
+      font-weight: bold;
+      color: #0066cc;
+    }
+  </style>
+</head>
+<body>
+  <h1>Ты наверное задашься вопросом, что же за херню я придумала. Но это квест!!</h1>
+  <p>Я очень надеюсь, что у тебя получится его решить! И сейчас будет первый шаг к решению загадки! Удачи!!!!</p>
+
+  <div class="puzzle">"g a r i i M e n " — Это анаграмма!</div>
+
+  <input type="text" id="answer" placeholder="Введи ответ здесь">
+  <button onclick="checkAnswer()">Проверить</button>
+
+  <div id="result" class="message"></div>
+  <div id="videoLink" class="link"></div>
+
+  <script>
+    function checkAnswer() {
+      const input = document.getElementById('answer').value.trim().toLowerCase();
+      const result = document.getElementById('result');
+      const video = document.getElementById('videoLink');
+
+      if (input === "migraine") {
+        result.textContent = "Правильно! Вот твоя подсказка:";
+        result.style.color = "#008800";
+        video.innerHTML = '<a href="https://youtu.be/mI78UgU4NWo" target="_blank">Перейти к видео</a>';
+      } else {
+        result.textContent = "Упс, не оно!! Думай еще!";
+        result.style.color = "#c00";
+        video.innerHTML = "";
+      }
+    }
+  </script>
+</body>
+</html>

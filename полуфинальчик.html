@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <title>Проверка ответа</title>
+  <style>
+    body {
+      background-color: pink;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+      margin: 0;
+      font-family: sans-serif;
+    }
+
+    input, button {
+      padding: 10px;
+      font-size: 18px;
+      margin: 10px;
+      border: none;
+      border-radius: 5px;
+    }
+
+    button {
+      background-color: #fff;
+      cursor: pointer;
+    }
+
+    #result {
+      margin-top: 20px;
+      font-size: 20px;
+      font-weight: bold;
+      color: #333;
+    }
+  </style>
+</head>
+<body>
+
+  <h2>Введи название:</h2>
+  <input type="text" id="userInput" placeholder="Ваш ответ...">
+  <button onclick="checkAnswer()">Ввод</button>
+
+  <div id="result"></div>
+
+  <script>
+    function checkAnswer() {
+      const input = document.getElementById("userInput").value.trim().toLowerCase();
+      const resultDiv = document.getElementById("result");
+
+      if (input === "надежда") {
+        resultDiv.innerHTML = '<a href="ВСТАВЬ_СЮДА_ССЫЛКУ" target="_blank">✅ Правильно! Перейти по ссылке</a>';
+        resultDiv.style.color = "green";
+      } else {
+        resultDiv.textContent = "❌ Найн! Не то!!";
+        resultDiv.style.color = "red";
+      }
+    }
+  </script>
+
+</body>
+</html>
