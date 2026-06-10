@@ -1,0 +1,333 @@
+Created by Пахомова Марина Григорьевна, last modified on Mar 10, 2026
+DEV: https://hr-dev.sberbank.ru/api-web/app-directory-calc/swagger-ui/index.html
+
+Режим редактирования
+Настройки видов оплаты
+
+
+Важно! Необходимо подписаться KafkaDirectoryCalcSettingsConsumer на сообщения в топике hrp.to_data_change_event для получения сообщения об обновлении настроек по видам оплаты от сервиса app-directory-calc
+
+При получении события об изменении необходимо удалить записи из таблицы и запросить повторно в рамках одной транзакции
+
+
+budget_classification - Код бюджетной классификации (КБК)
+tax_deductions - Налоговые вычеты
+tax_scales - Шкалы налогов и взносов
+pay_types - Справочник видов оплат
+
+
+budget_classification - Код бюджетной классификации (КБК)
+таблица в DirectoryForCalc: payroll.budget_classification
+
+Primary key: param
+
+param	varchar(50)	X	Параметр КБК	ndfl01_13	param
+start_date	date	X	Дата начала действия	2024-01-01	start_date
+end_date	date	X	Дата окончания действия	9999-12-31	end_date
+kbk	varchar(20)	X	Код бюджетной классификации (КБК)	18210102010011000110	kbk
+updated_at	timestamp	X	Дата и время обновления	2025-04-13 09:54:22.798	updated
+
+
+Тип запроса: POST/settings/tables/filtred-data - Множественная фильтрация данных из разных таблиц
+
+Request:
+
+KBK_RQ
+{
+  "tableFilters": {
+    "payroll_budget_classification": {
+      "columnFilters": [
+        {
+          "columnName": "param",
+          "conditions": [
+            {
+              "operator": "STARTS_WITH",
+              "value": "ndfl",
+              "values": []
+            }
+          ]
+        }
+      ]
+    }
+  }
+}
+
+
+tax_deductions - Налоговые вычеты
+таблица в DirectoryForCalc: sett.tax_deductions
+
+Primary key: id_deduction
+
+id
+id_deduction
+
+int	X	ИД вычета	1	iid
+id_deduction
+code_deduction	varchar(5)	X	Код вида вычета	105	code_deduction
+start_date	date	X	Дата начала	01.01.2025	start_date
+end_date	date	X	Дата окончания	31.12.9999	end_date
+fact	varchar(10)	X	Факт	VF105	fact
+updated_at	timestamp	X	Дата и время обновления	2025-04-13 09:54:22.798	updated
+
+
+Тип запроса: POST/settings/tables/filtred-data - Множественная фильтрация данных из разных таблиц
+
+Request:
+
+deductions_RQ
+{
+  "tableFilters": {
+    "sett_tax_deductions": {
+      "columnFilters": [
+        {
+          "columnName": "method",
+          "hideColumn": true,
+          "conditions": [
+            {
+              "values": []
+            }
+          ]
+        },
+        {
+          "columnName": "tax_deductions_right",
+          "hideColumn": true,
+          "conditions": [
+            {
+              "values": []
+            }
+          ]
+        },
+        {
+          "columnName": "combine",
+          "hideColumn": true,
+          "conditions": [
+            {
+              "values": []
+            }
+          ]
+        },
+        {
+          "columnName": "deduction_limit",
+          "hideColumn": true,
+          "conditions": [
+            {
+              "values": []
+            }
+          ]
+        },
+        {
+          "columnName": "mrot",
+          "hideColumn": true,
+          "conditions": [
+            {
+              "values": []
+            }
+          ]
+        },
+        {
+          "columnName": "without_tax_sum",
+          "hideColumn": true,
+          "conditions": [
+            {
+              "values": []
+            }
+          ]
+        },
+        {
+          "columnName": "without_tax_precent",
+          "hideColumn": true,
+          "conditions": [
+            {
+              "values": []
+            }
+          ]
+        },
+        {
+          "columnName": "priority",
+          "hideColumn": true,
+          "conditions": [
+            {
+              "values": []
+            }
+          ]
+        },
+        {
+          "columnName": "personal",
+          "hideColumn": true,
+          "conditions": [
+            {
+              "values": []
+            }
+          ]
+        },
+        {
+          "columnName": "deduction_limit_source",
+          "hideColumn": true,
+          "conditions": [
+            {
+              "values": []
+            }
+          ]
+        }
+      ]
+    }
+  }
+}
+tax_scales - Шкалы налогов и взносов
+таблица в DirectoryForCalc: sett.tax_scales
+
+Primary key: tax_scales_id
+
+Unique: tax_scale
+
+id
+tax_scales_id	int8	X	id идентификатор настройки	1	id
+tax_scales_id
+tax_scale	varchar(10)	X	Ид налоговой шкалы	NDFL012501	tax_scale
+tax_num	varchar(10)	X	Код вида налога	NDFL01	tax_num
+start_date	date	X	Дата начала	01.01.2025	start_date
+end_date	date	X	Дата окончания	31.12.9999	end_date
+scale	int2	
+Порядковый номер шкалы	1	scale
+percent	numeric(6, 2)	X	Шкала	13	percent
+base_max	numeric(15, 2)	
+Предельное значение - база	2400000.00	base_max
+tax_max	numeric(15, 2)	
+Предельное значение - налог	312000.00	tax_max
+income_in_period	varchar(10)	
+Доход "в-период"	BN100	income_in_period
+income_for_period	varchar(10)	
+Доход "для-период"	BN101	income_for_period
+base_foreign	varchar(10)	
+Облагаемая база - др.источник	BV200	base_foreign
+tax_foreign	varchar(10)	
+Налог/взнос исч. - др. источник	BV300	tax_foreign
+base	varchar(10)	
+Облагаемая база	BN200	base
+tax_calculation	varchar(10)	
+Налог/взнос исчисленный	BN300	tax_calculation
+tax_hold	varchar(10)	
+Налог/взнос удержанный	BN400	tax_hold
+tax_debt	varchar(10)	
+Налог/взнос задолженность	DN400	tax_debt
+tax_debts_forgive	varchar(10)	
+Налог/взнос списание задолженности	DN500	tax_debts_forgive
+updated_at	timestamp	X	Дата и время обновления	2025-04-13 09:54:22.798	updated
+
+
+Тип запроса: POST/settings/tables/filtred-data - Множественная фильтрация данных из разных таблиц
+
+tax_scales_RQ
+{
+  "tableFilters": {
+    "sett_tax_scales": {
+      "columnFilters": [
+        {
+          "columnName": "discount",
+          "hideColumn": true,
+          "conditions": [
+            {
+              "values": []
+            }
+          ]
+        },
+        {
+          "columnName": "method",
+          "hideColumn": true,
+          "conditions": [
+            {
+              "values": []
+            }
+          ]
+        },
+        {
+          "columnName": "method_round",
+          "hideColumn": true,
+          "conditions": [
+            {
+              "values": []
+            }
+          ]
+        },
+        {
+          "columnName": "priority",
+          "hideColumn": true,
+          "conditions": [
+            {
+              "values": []
+            }
+          ]
+        }
+      ]
+    }
+  }
+}
+
+
+pay_types - Справочник видов оплат
+таблица в DirectoryForCalc: sett.pay_types
+
+Primary key: id
+
+Unique: pay_type
+
+id	bigint	X	Идентификатор записи	1	id
+pay_types_id	bigint	X	id идентификатор настройки	6	pay_types_id
+pay_type	varchar(10)	X	Уникальный идентификатор вида оплат	10001	pay_type
+title	varchar(100)	
+Краткое наименование	Оклад начисленный	title
+pay_type_group_id	char(1)	
+Тип удержания	N	group
+start_date	date	
+Дата начала действия	01.01.1900	start_date
+end_date	date	
+Дата окончания действия	31.12.9999	end_date
+updated_at	timestamp	X	Дата и время обновления	2025-04-13 09:54:22.798	updated
+
+
+Тип запроса: POST/settings/tables/filtred-data - Множественная фильтрация данных из разных таблиц
+
+pay_type_RQ
+{
+  "tableFilters": {
+    "sett_pay_types": {
+      "columnFilters": [
+        {
+          "columnName": "group",
+          "hideColumn": true,
+          "conditions": [
+            {
+              "operator": "NOT_EQUALS",
+              "values": [
+                "U",
+                "P",
+                "V",
+                "S",
+                "B",
+                "T"
+              ]
+            }
+          ]
+        },
+        {
+          "columnName": "pay_type_visual",
+          "hideColumn": true,
+          "conditions": [
+            {
+              "values": []
+            }
+          ]
+        },
+        {
+          "columnName": "sort",
+          "hideColumn": true,
+          "conditions": [
+            {
+              "values": []
+            }
+          ]
+        }
+      ]
+    }
+  }
+}
