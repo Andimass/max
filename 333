@@ -1,0 +1,126 @@
+Created by Пахомова Марина Григорьевна, last modified on Dec 09, 2025
+income_code - Справочник кодов видов дохода
+pay_type_income_code_relation - Присвоение виду оплаты код вида дохода
+income_sign - Справочник признаков дохода
+pay_type_income_sign_relation - Присвоение виду оплаты признак дохода
+period - Отчетный период
+sb_rf_department - Коды департаментов (СБ РФ)
+cu_be_relation - Маппинг ЕР/БЕ
+rnu_identity_document - Документы, удостоверяющие личность, в РНУ
+deduction_code_doc_type_relation - Типы документов вычетов
+budget_classification_tax_scale_relation- Присвоение КБК налоговой шкале
+constant_set - Справочник кодов видов дохода
+income_code - Справочник кодов видов дохода
+code	varchar(4)	PK	X	Код вида дохода	2000
+description	varchar(255)	
+
+Описание	Зарплата и др. выплаты за выполнение трудовых или иных обязанностей, кроме авторских вознаграждений
+Заполнение настроечной таблицы
+pay_type_income_code_relation - Присвоение виду оплаты код вида дохода
+id	int	PK	X	Идентификатор записи	1
+pay_type	varchar(10)	
+X	Вид оплаты	10001
+income_code	varchar(4)	FK (income_code_code)	X	Код вида дохода	2000
+start_date	date	
+X	Дата начала действия	01.01.2000
+end_date	date	
+X	Дата окончания действия	31.12.9999
+Комбинация полей pay_type и start_date должна быть уникальной
+
+Заполнение настроечной таблицы представлено в файле: Присвоение виду оплаты код вида дохода.xlsx  
+
+income_sign - Справочник признаков дохода
+code	varchar(2)	PK	X	Код признака	01
+description	varchar(255)	
+
+Описание	Начисление дохода при выводе денежных средств с брокерского счёта
+Заполнение настроечной таблицы
+pay_type_income_sign_relation - Присвоение виду оплаты признак дохода
+id	int	PK	X	Идентификатор записи	1
+pay_type	varchar(10)	
+X	Вид оплаты	10001
+income_sign	varchar(2)	FK (income_sign_code)	X	Признак дохода	05
+start_date	date	
+X	Дата начала действия	01.01.2000
+end_date	date	
+X	Дата окончания действия	31.12.9999
+Комбинация полей pay_type и start_date должна быть уникальной
+
+Заполнение настроечной таблицы представлено в файле: Присвоение виду оплаты признак дохода (2).xlsx
+
+period - Отчетный период
+id	int	PK	X	Идентификатор записи	1
+quarter_no	int	
+
+Номер квартала	1
+rnu_period	varchar(2)	
+X	Период РНУ	21
+description	varchar(255)	
+
+Описание	1 квартал
+1	1	21	1 квартал
+2	2	31	полугодие
+3	3	33	девять месяцев
+4	4	34	год
+sb_rf_department - Коды департаментов (СБ РФ)
+id	int	PK	X	Идентификатор записи	1
+business_unit_code	varchar(25)	FK (mdm_business_unit_code)	X	Код балансовой единицы	9900
+sbrf_code	varchar(25)	
+X	Код СБ РФ	99_0000_00
+start_date	date	
+X	Дата начала действия	01.01.2013
+end_date	date	
+X	Дата окончания действия	31.12.9999
+Комбинация полей business_unit_code и start_date должна быть уникальной
+
+Заполнение настроечной таблицы
+cu_be_relation - Маппинг ЕР/БЕ
+calc_unit_code	varchar(2)	PK	X	ЕР	38
+business_unit_code	varchar(25)	FK (mdm_business_unit_code)	X	БЕ	9900
+Заполнение настроечной таблицы
+rnu_identity_document - Документы, удостоверяющие личность, в РНУ
+code	varchar(2)	PK	X	Код документа в РНУ	03
+document_type	varchar(4)	
+FK
+(mdm_document_types_code)
+
+X	Вид документа	Z090
+priority	int	
+X	Приоритет	20
+Заполнение настроечной таблицы
+deduction_code_doc_type_relation - Типы документов вычетов
+id	int	PK	X	Идентификатор записи	1
+deduction_code	varchar(3)	FK (mdm_tax_deductions_code)	X	Код вычета	104
+doc_type	enum	
+X	
+Тип документа, на основании которого предоставляется налоговый вычет
+1 -  заявление;
+2 - уведомление.
+
+1
+start_date	date	
+X	Дата начала действия	01.01.1900
+end_date	date	
+X	Дата окончания действия	31.12.9999
+Комбинация полей deduction_code и start_date должна быть уникальной
+
+Заполнение настроечной таблицы
+budget_classification_tax_scale_relation- Присвоение КБК налоговой шкале
+id	int	PK	X	Идентификатор записи	1
+tax_scale	varchar(10)	
+X	Ид налоговой шкалы	NDFL012501
+param	varchar(50)	
+X	Параметр КБК	ndfl01_13
+start_date	date	
+X	Дата начала действия	01.01.2025
+end_date	date	
+X	Дата окончания действия	31.12.9999
+Комбинация полей tax_scale и start_date должна быть уникальной
+
+Заполнение настроечной таблицы
+constant_set - Справочник кодов видов дохода
+parameter	varchar(255)	PK	X	Параметр	asnu_code_pulse
+value	varchar(255)	
+
+Значение параметра	1000
+asnu_code_pulse	1000
