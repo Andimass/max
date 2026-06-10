@@ -1,0 +1,194 @@
+# Проект таблиц БД — блок валидации РНУ (DRAFT)
+
+> Задача: отправка уведомлений об ошибках регулярных проверок РНУ в сервис Валидация (ИВ-27.1 «Создание отклонения»).
+> Новые таблицы — внутренний блок валидации **на стороне ReportsTax** (сейчас отсутствует).
+> СУБД: Pangolin (PostgreSQL). Конвенции — как в существующей модели `reportstax` (`rnu_setting.*` настроечные, `rnu_report.*` транзакционные; коды varchar; `start_date`/`end_date` + UNIQUE(ключ, start_date); аудит `created_at`/`updated_at`).
+> Статус: черновик. Поля, завязанные на контракт Валидатора, помечены «(сверить)».
+
+---
+
+## Состав
+
+| Таблица | Схема | Тип | Назначение |
+|---|---|---|---|
+| `validation_check` | `rnu_setting` | настроечная | Реестр проверок: определения, тип, правило, важность, рекомендуемое действие. Расширяемая. |
+| `validation_result` | `rnu_report` | транзакционная | Лог результатов прогона по записям РНУ. Источник «выжимки» + основа повторной сверки. |
+| `validation_sending_log` | `rnu_report` | транзакционная | Аудит отправки уведомлений в Валидацию (по образцу `rnu_xml_sending_log`). |
+| `validation_deviation` (опц.) | `rnu_report` | транзакционная | Отклонение как сущность поверх прогонов — вводить, если нужна сквозная корреляция/линковка с Валидатором. Решение после inbound-контракта. |
+
+---
+
+## 1. `rnu_setting.validation_check` — реестр проверок
+
+| Поле | Тип | Обяз. | Описание | Пример |
+|---|---|---|---|---|
+| id | bigserial PK | X | Суррогатный ключ | 1 |
+| code | varchar(10) | X | Код проверки | V_001 |
+| name | varchar(255) | X | Наименование | Наличие фамилии |
+| check_type | enum | X | Тип: PRESENCE / FORMAT / LOGIC / CONTROL_NUMBER | PRESENCE |
+| severity | enum | X | Важность: ERROR / WARNING | ERROR |
+| error_code | varchar(4) |  | Код ошибки для уведомления | 12 |
+| error_text_tpl | text |  | Шаблон текста ошибки (с подстановками) | База ≠ доход − вычет |
+| rule | text | X | Правило/выражение проверки | base_amount = income_amount − Σdeduction |
+| target_entity | varchar(20) |  | Объект проверки: PERSON_DATA / INCOME / DEDUCTION | INCOME |
+| recommended_action | text |  | Рекомендуемое действие (отдаём в Валидацию) (сверить формат) | Проверить вычеты |
+| start_date | date | X | Действует с | 2026-01-01 |
+| end_date | date | X | Действует по | 9999-12-31 |
+| status | enum | X | ACTIVE / INACTIVE | ACTIVE |
+| created_at / updated_at | timestamptz | X | Аудит | now() |
+| updated_by | varchar(50) |  | Кто изменил | — |
+
+UNIQUE (code, start_date).
+
+```sql
+CREATE TYPE rnu_setting.validation_check_type   AS ENUM ('PRESENCE','FORMAT','LOGIC','CONTROL_NUMBER');
+CREATE TYPE rnu_setting.validation_severity     AS ENUM ('ERROR','WARNING');
+CREATE TYPE rnu_setting.validation_check_status AS ENUM ('ACTIVE','INACTIVE');
+
+CREATE TABLE rnu_setting.validation_check (
+    id                 bigserial PRIMARY KEY,
+    code               varchar(10) NOT NULL,                       -- код проверки, напр. V_001
+    name               varchar(255) NOT NULL,                      -- наименование
+    check_type         rnu_setting.validation_check_type NOT NULL, -- наличие/формат/логика/контрольное число
+    severity           rnu_setting.validation_severity   NOT NULL, -- ошибка/предупреждение
+    error_code         varchar(4),                                 -- код ошибки в уведомлении (10/12/25)
+    error_text_tpl     text,                                       -- шаблон текста ошибки
+    rule               text NOT NULL,                              -- правило/выражение проверки
+    target_entity      varchar(20),                                -- PERSON_DATA / INCOME / DEDUCTION
+    recommended_action text,                                       -- рекомендуемое действие (в Валидацию)
+    start_date         date NOT NULL,
+    end_date           date NOT NULL DEFAULT DATE '9999-12-31',
+    status             rnu_setting.validation_check_status NOT NULL DEFAULT 'ACTIVE',
+    created_at         timestamptz NOT NULL DEFAULT now(),
+    updated_at         timestamptz NOT NULL DEFAULT now(),
+    updated_by         varchar(50),
+    CONSTRAINT uq_validation_check_code_start UNIQUE (code, start_date)
+);
+```
+
+---
+
+## 2. `rnu_report.validation_result` — лог результатов проверок
+
+| Поле | Тип | Обяз. | Описание |
+|---|---|---|---|
+| id | uuid PK | X | Идентификатор записи лога |
+| check_code | varchar(10) | X | Логич. ссылка на `validation_check.code` (по дате действия) |
+| job_id | uuid | X | Задание формирования |
+| job_period_id | uuid |  | Период отчёта |
+| person_id | uuid |  | ФЛ |
+| do_id | uuid |  | Договорные отношения |
+| employee_number | varchar(10) |  | Табельный номер |
+| operation_id | varchar(30) |  | Ссылка на запись РНУ (`rnu_income.operation_id`) |
+| income_id | uuid |  | Ссылка на строку `rnu_income` (если проверка по доходу) |
+| result | enum | X | DETECTED / NOT_DETECTED (отклонение выявлено/нет) |
+| severity | enum |  | ERROR / WARNING (денорм. на момент прогона) |
+| error_code | varchar(4) |  | Код ошибки |
+| error_text | text |  | Материализованный текст ошибки |
+| recommended_action | text |  | Рекомендуемое действие |
+| checked_at | timestamptz | X | Дата/время проверки |
+| deviation_id | uuid |  | Наш стабильный ключ отклонения (для сверки/обратного статуса) |
+| sent_to_validation | boolean | X | Признак отправки в Валидацию |
+| sent_at | timestamptz |  | Когда отправлено |
+| validator_request_no | varchar(50) |  | Номер заявки от Валидатора (ИВ-27.2) (сверить) |
+| correction_status | enum | X | NEW / SENT / IN_PROGRESS / FIXED / REFORMED / CLOSED |
+| created_at / updated_at | timestamptz | X | Аудит |
+
+```sql
+CREATE TYPE rnu_report.validation_result_kind      AS ENUM ('DETECTED','NOT_DETECTED');
+CREATE TYPE rnu_report.validation_correction_status AS ENUM ('NEW','SENT','IN_PROGRESS','FIXED','REFORMED','CLOSED');
+
+CREATE TABLE rnu_report.validation_result (
+    id                   uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    check_code           varchar(10) NOT NULL,                          -- → validation_check.code (по дате)
+    job_id               uuid NOT NULL,
+    job_period_id        uuid,
+    person_id            uuid,
+    do_id                uuid,
+    employee_number      varchar(10),
+    operation_id         varchar(30),                                   -- rnu_income.operation_id
+    income_id            uuid,                                          -- rnu_income.id (если проверка по доходу)
+    result               rnu_report.validation_result_kind NOT NULL,
+    severity             rnu_setting.validation_severity,
+    error_code           varchar(4),
+    error_text           text,
+    recommended_action   text,
+    checked_at           timestamptz NOT NULL DEFAULT now(),
+    deviation_id         uuid,                                          -- стабильный ключ отклонения
+    sent_to_validation   boolean NOT NULL DEFAULT false,
+    sent_at              timestamptz,
+    validator_request_no varchar(50),                                   -- номер заявки Валидатора (сверить)
+    correction_status    rnu_report.validation_correction_status NOT NULL DEFAULT 'NEW',
+    created_at           timestamptz NOT NULL DEFAULT now(),
+    updated_at           timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX ix_vr_period_person ON rnu_report.validation_result (job_period_id, person_id);
+CREATE INDEX ix_vr_deviation     ON rnu_report.validation_result (deviation_id);
+CREATE INDEX ix_vr_to_send       ON rnu_report.validation_result (sent_to_validation, result)
+                                  WHERE result = 'DETECTED';
+```
+
+---
+
+## 3. `rnu_report.validation_sending_log` — лог отправки в Валидацию
+
+| Поле | Тип | Обяз. | Описание |
+|---|---|---|---|
+| id | uuid PK | X | Идентификатор записи лога |
+| deviation_id | uuid |  | Что отправляли |
+| batch_id | uuid |  | Идентификатор батча (если отправка пачкой) |
+| request_id | uuid |  | Корреляция запроса |
+| operation_type | varchar(20) | X | Тип операции (CREATE_DEVIATION) |
+| operation_status | enum | X | SUCCESS / ERROR |
+| payload | jsonb |  | Отправленное сообщение (аудит/реплей) |
+| response_code | varchar(20) |  | Код ответа Валидатора (сверить) |
+| response_message | text |  | Текст ответа |
+| error_code / error_text | varchar/text |  | Ошибка отправки |
+| created_at | timestamptz | X | Когда |
+
+```sql
+CREATE TYPE rnu_report.validation_send_status AS ENUM ('SUCCESS','ERROR');
+
+CREATE TABLE rnu_report.validation_sending_log (
+    id               uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    deviation_id     uuid,
+    batch_id         uuid,
+    request_id       uuid,
+    operation_type   varchar(20) NOT NULL DEFAULT 'CREATE_DEVIATION',
+    operation_status rnu_report.validation_send_status NOT NULL,
+    payload          jsonb,                                  -- отправленное сообщение
+    response_code    varchar(20),
+    response_message text,
+    error_code       varchar(20),
+    error_text       text,
+    created_at       timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX ix_vsl_deviation ON rnu_report.validation_sending_log (deviation_id);
+CREATE INDEX ix_vsl_request   ON rnu_report.validation_sending_log (request_id);
+```
+
+---
+
+## Связи (ER, логические)
+
+- `validation_result.check_code` → `validation_check.code` (по дате действия; FK не жёсткий из-за версионности).
+- `validation_result.job_id` → `rnu_report.job.id`; `job_period_id` → `rnu_report.job_period.id`; `income_id` → `rnu_report.rnu_income.id`.
+- `validation_sending_log.deviation_id` → `validation_result.deviation_id`.
+
+## Поток (как таблицы работают вместе)
+
+1. Прогон регулярных проверок: по активным `validation_check` пишем строки в `validation_result` (`result`, `severity`, `error_*`, `deviation_id`).
+2. Отправка: по `validation_result` где `result=DETECTED` и `sent_to_validation=false` формируем выжимку → отправляем в Валидацию → пишем `validation_sending_log`, проставляем `sent_to_validation=true`, `sent_at`, `correction_status=SENT`.
+3. Обратный статус (ИВ-27.2, сверить): по `deviation_id`/`validator_request_no` обновляем `correction_status` (IN_PROGRESS/FIXED).
+4. Переформирование по 1 ФЛ → повторный прогон → новая строка `validation_result`; если ошибки нет — `correction_status=REFORMED/CLOSED`.
+
+## Допущения и открытые вопросы (фиксируются после ответа команды Валидатора)
+
+- Значения enum (`severity`, `result`, `correction_status`, коды ошибок) — рабочие, согласовать с методологом/Валидатором.
+- `recommended_action` — свободный текст или код из Матрицы/Рекомендаций Валидатора (сверить).
+- `payload`, `response_code`, обратный статус и ключ корреляции — зависят от inbound-контракта Валидатора (Kafka/REST).
+- Гранулярность отклонения: проект исходит из (проверка × операция); группировка по ФЛ — на стороне Валидатора.
+- Нужна ли отдельная `validation_deviation` (отклонение как сущность поверх прогонов) — решить после контракта; пока жизненный цикл держим на `validation_result` через `deviation_id` + `correction_status`.
+- `gen_random_uuid()` требует расширения `pgcrypto` (или `uuid-ossp`/`uuidv7` на стороне приложения) — уточнить в Pangolin.
