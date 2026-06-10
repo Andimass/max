@@ -1,0 +1,429 @@
+Описание: 
+
+Контракт составлен на отправку доменного события по СУТ по kafka
+
+
+
+Ограничения: 
+
+Доменное событие от витрины сут будет содержать только тот набор атрибутов, которые включены в СУТ. см описание тут: Учетные данные Кадрового ядра . Разметка атрибутов тут: Модель данных для Финансов
+
+Не по всем атрибутам СУТ еще принято решение по учету или реализована отправка их. Из-за того состав данных в контракте не окончательная. См ниже красные пункты в контракте
+
+
+
+Алгоритм формирования доменного события от витрины: 
+
+Доменное событие формируется при успешном проведении мероприятия по любому из сущностей из состава СУТ в момент применения данных на Витрине. И по расписанию при миграции данных из сап. 
+
+Описание контракта 
+Версия v.1.00
+Топик для отправки hrp.app.hremployeedatamart.domain в кластере hr-basis
+
+Заголовок
+Требования к заголовку доменных событий зафиксированы на странице  Требования к Доменным событиям
+
+domain-version
+
+string	false	
+v.1.0.0	Версия контракта доменного события 
+domain-name	string	false	
+HRemployeeDataMartDomain	Наименование доменного события 
+operation-id	string	false	uuid	c93b50a4-ac7a-4ae2-b147-6c41ed9da761	
+Идентификатор бизнес-операции. Наследуется от последнего изменения
+
+Если доменное событие отправляется в ходе реконсиляции, то значение генерируется
+
+transaction-id	string	true	
+null	так как доменное событие Витрины СУТ составляется из данных разных сервисов, будут передано как null
+operation-type	string	false	
+16001	Тип операции по справочнику операций OPERATION_TYPES в LocalList. Ссылка на справочник https://hr-dev.sberbank.ru/platform/local-list-admin/dictionary/366
+Наследуется от последнего изменения, недопустимо переопределение на каждый вызов.  
+Для миграции создана запись в справочнике с кодом 04001
+Если доменное событие формируется по запросу на реконсиляцию, то необходимо задать соответствующие значение кода из справочника - 18001
+task-id	string	true	uuid	c93b50a4-ac7a-4ae2-b147-6c41ed9da761	Идентификатор задачи (в данном случае на публикацию), который создается при поступлении запроса на реконсиляцию от потребителя. 
+Заполняется только для задач реконсиляции
+service-name	string	false	
+app-hremployeedatamart	Наименование сервиса, который публикует доменное событие 
+subscriber-service-name	string	true	
+app-payroll	Наименование сервиса, для которого опубликовано сообщение
+Заполняется только для задач реконсиляции. 
+Параметр придет в запросе на реконсиляцию
+primary-key-name	string	false	
+doId	Наименование первичного ключа доменного события. Витрина СУТ формирует доменное событие по doId.
+primary-key-value	string	false	uuid	f7655cb8-e055-4fc1-b3a0-d7947379be76	Значение первичного ключа доменного события 
+updated-at	string	false	yyyy-MM-dd’T’HH:mm:ss.SSSZ 	null	Время и дата формирования доменного события. Будет передаваться как null 
+version	string	true	
+24836	от 0 до max. Данный параметр будет передаваться как параметр ревизии 
+action-timestamp 	string	true	yyyy-MM-dd’T’HH:mm:ss.SSSZ 	
+Дата и время формирования payload сообщения. Значение параметра нужно для BL. Добавить в рамках HRPDC-2349 - Витрина. Доработка заголовков доменного события от витрины Open
+
+Тело сообщения 
+Параметр	Тип данных	Nullable	Формат	Пример 	Описание 
+Параметр	Тип данных	Nullable	Формат	Пример 	Описание 
+doPersonRelation	array	
+
+Сущность связь сотрудника с ДО
+
+doId	string	false	uuid	005056a5-dc4d-1edf-9eee-839d70c2efc3	Идентификатор ДО
+
+personId	string	false	
+cf67a88a-5350-4d19-a37d-93c30f5b9d3c	Идентификатор сотрудника
+doPersonAttr	array	
+
+
+
+
+id	string	false	uuid	8c2bb3da-9488-413e-8dc4-0c40418c2c12	ID записи на стороне источника
+
+doId	string	false	uuid	af6c4885-1111-4ba7-b968-87072b6605df	Уникальный идентификатор ДО
+
+personId	string	false	uuid	af6c4885-2222-4ba7-b968-87072b6605pk	Уникальный идентификатор сотрудника
+
+doType	string	true	
+01	Виды договорных отношений
+
+employeeNumber	string	true	
+957676786	Табельный номер сотрудника
+
+validFrom	string	true	yyyy-MM-dd	2024-04-24 	Действует с
+
+validTo	string	true	yyyy-MM-dd	2024-04-24 	Действует по
+
+dataTypeMdmCode	string	true	
+1	Код типа ДО
+
+doStatus	string	true	
+1	Статус договорных отношений
+
+sourceUpdatedAt	string	true	
+yyyy-MM-dd’T’HH:mm:ss.SSSSSSSSSZ миллисекунды до 6 знаков.
+
+Зависит от того до какой точности передает мастер сервис
+
+2025-11-07T10:56:18.176Z	Дата и время обновления данных на стороне мастер сервиса
+doPersonContracts	array	
+
+
+
+
+id	string	false	uuid	005056a5-dc4d-1edf-9eee-839d70c2efc3	Идентификатор записи
+
+doId	string	false	uuid	005056a5-dc4d-1edf-9eee-839d70c2efc3	Идентификатор ДО
+
+personId	string	false	uuid	005056a5-dc4d-1edf-9eee-839d70c2efc3	Идентификатор сотрудника
+
+contractNumber	string	true	
+1236-ku	Номер контракта
+
+contractMdmCode	string	true	
+2	
+Тип договора - код справочника mdm,
+
+соответствующий data_type договора,
+
+т. data_type - mdm_code, соответствующего do_contract - data_type
+
+
+validFrom	string	true	yyyy-MM-dd	2025-11-15	дата начала действия записи договора
+
+validTo	string	true	yyyy-MM-dd	2025-11-15	дата окончания действия записи договора
+
+contractDate	string	true	yyyy-MM-dd	2025-11-15	дата договора
+
+endDate	string	true	yyyy-MM-dd	2025-11-15	срок действия
+
+status	string	true	
+2	статус договора
+
+probPeriod	string	true	
+2	количество единицы времени испытательного срока
+
+probTimeUnit	string	true	
+362	код единицы времени испытательного срока
+
+sourceUpdatedAt	string	true	
+yyyy-MM-dd’T’HH:mm:ss.SSSSSSSSSZ миллисекунды до 6 знаков.
+
+Зависит от того до какой точности передает мастер сервис
+
+2025-11-07T10:56:18.176Z	Дата и время обновления данных на стороне мастер сервиса
+primaryPayments	array	
+
+
+
+Основные выплаты
+
+id	string	false	uuid	005056a5-dc4d-1edf-9eee-839d70c2efc3	Идентификатор записи
+
+doId	string	false	uuid	005056a5-dc4d-1edf-9eee-839d70c2efc3	Идентификатор ДО
+
+validFrom	string	true	yyyy-MM-dd	2025-11-15	дата начала действия записи договора
+
+validTo	string	true	yyyy-MM-dd	2025-11-15	дата окончания действия записи договора
+
+currencyCode	string	true	
+
+
+4643	Код валюты
+
+paymentTypeId	string	true	
+
+
+1033	Код вида оплаты - ПУЛЬСовое значение из т. data_type_tx для primary_payment -payment_type_id
+
+currencyAmount	number	true	
+numeric
+
+34235.34	Сумма в валюте
+
+quantity	number	true	
+numeric
+
+10	Количество выплаты 
+
+unitOfMeasureId	string	true	
+
+
+50001	ID единицы измерения
+
+regionZoneId	string	true	
+
+
+РКС80	Территориальные условия (ТУ)
+
+maxNorth	string	true	
+
+
+80	Максимальный  размер СН
+
+payScaleId	string	true	
+uuid
+
+181b607f-bc6e-4fca-9b0e-79c789abcec8	Ссылка на ТРС
+
+sourceUpdatedAt	string	true	
+yyyy-MM-dd’T’HH:mm:ss.SSSSSSSSSZ миллисекунды до 6 знаков.
+
+Зависит от того до какой точности передает мастер сервис
+
+2025-11-07T10:56:18.176Z	Дата и время обновления данных на стороне мастер сервиса
+regularPayments
+array	
+
+
+
+Периодические выплаты
+
+id	string	false	uuid	af6c4885-1111-4ba7-b968-87072b6605ce	ID Записи
+
+doId	string	false	uuid	181b607f-bc6e-4fca-9b0e-79c789abcec7	do_id
+
+validFrom	string	true	yyyy-MM-dd	2022-12-12	Действует с
+
+validTo	string	true	yyyy-MM-dd	2023-12-12	Действует по 
+
+currencyCode	string	true	
+
+
+4643	Код валюты
+
+paymentTypeId	string	true	
+
+
+32608	ID вида оплаты 
+
+currencyAmount	number	true	
+
+
+34235.34	Сумма в валюте
+
+quantity	number	true	
+
+
+10	Количество выплаты 
+
+unitOfMeasureId	number	true	
+
+
+50001	ID единицы измерения
+
+sourceUpdatedAt	string	true	
+yyyy-MM-dd’T’HH:mm:ss.SSSSSSSSSZ миллисекунды до 6 знаков.
+
+Зависит от того до какой точности передает мастер сервис
+
+2025-11-07T10:56:18.176Z	Дата и время обновления данных на стороне мастер сервиса
+instantPayments	array	
+
+
+
+Разовые выплаты
+
+id	string	false	uuid	af6c4885-1111-4ba7-b968-87072b6605ce	ID Записи
+
+doId	string	false	uuid	181b607f-bc6e-4fca-9b0e-79c789abcec7	do_id
+
+validFrom	string	true	yyyy-MM-dd	2022-12-12	Действует с
+
+validTo	string	true	yyyy-MM-dd	2023-12-12	Действует по 
+
+currencyCode	string	true	
+
+
+4643	Код валюты
+
+paymentTypeId	string	true	
+
+
+32608	ID вида оплаты 
+
+currencyAmount	number	true	
+
+
+34235.34	Сумма в валюте
+
+quantity	number	true	
+
+
+10	Количество выплаты 
+
+unitOfMeasureId	number	true	
+
+
+50001	ID единицы измерения
+
+sourceUpdatedAt	string	true	
+yyyy-MM-dd’T’HH:mm:ss.SSSSSSSSSZ миллисекунды до 6 знаков.
+
+Зависит от того до какой точности передает мастер сервис
+
+2025-11-07T10:56:18.176Z	Дата и время обновления данных на стороне мастер сервиса
+employeeStructure	
+
+
+
+
+
+id	string	false	
+af6c4885-1111-4ba7-b968-87072b6605ce	ID Записи
+
+doId	string	false	
+af6c4885-1111-4ba7-b968-87072b6605ce	ID ДО (Сотрудника)
+
+prozt 	string	true	через точку. 4 символа после точки. см пример	1.0000	Доля занимаемой должности
+
+temporary	boolean	true	
+false	Признак временности связи
+
+oeId	string	true	uuid	af6c4885-1111-4ba7-b968-87072b6605ce	ID Орг Единицы (идентификатор пульсовый)
+
+positionId	string	true	uuid	af6c4885-1111-4ba7-b968-87072b6605ce	ID Штатной должности (идентификатор пульсовый)
+
+relationTypeCode	string	true	
+008_S_P	
+Тип связи. Добавлено, потому что в ШР будет и постоянная и временная связь 
+
+009_S_P - временная связь 
+
+008_S_P - постоянная связь 
+
+
+oeSapId	string	true	
+34266793	ID Орг Единицы (идентификатор SAP)
+
+positionSapId	string	true	
+34266793	ID Штатной должности (идентификатор SAP)
+
+validFrom	string	true	yyyy-MM-dd	2022-12-12	Действует с
+
+validTo	string	true	yyyy-MM-dd	2023-12-12	Действует по 
+
+sourceUpdatedAt	string	true	
+yyyy-MM-dd’T’HH:mm:ss.SSSSSSSSSZ миллисекунды до 6 знаков.
+
+Зависит от того до какой точности передает мастер сервис
+
+2025-11-07T10:56:18.176Z	Дата и время обновления данных на стороне мастер сервиса
+movement
+
+
+
+
+
+
+
+id	string	false	uuid	af6c4885-1111-4ba7-b968-87072b6605ce	ID записи на стороне источника
+
+doId	string	false	uuid	0e996e69-76b7-485a-8e7d-874832703a42	Идентификатор ДО
+
+eventDate	string	true	
+yyyy-MM-dd
+
+2022-12-12	Дата проведения мероприятия
+
+eventTypeMdmCode	string	true	
+
+
+001
+
+Тип мероприятия
+
+eventReasonMdmCode	string	true	
+
+
+0003
+
+Причина мероприятия
+
+eventClarificationMdmCode	string	true	
+
+
+0008
+
+Уточнение причины мероприятия (необязательное поле)
+
+sourceUpdatedAt	string	true	
+yyyy-MM-dd’T’HH:mm:ss.SSSSSSSSSZ миллисекунды до 6 знаков.
+
+Зависит от того до какой точности передает мастер сервис
+
+2025-11-07T10:56:18.176Z	Дата изменения записи на стороне источника
+movementDocs	
+
+
+
+
+
+
+id	string	false	uuid	af6c4885-1111-4ba7-b968-87072b6605ce	ID документа
+
+movId	string	false	uuid	73a2b901-0962-4260-b806-7575eccb3548	Идентификатор мероприятия
+
+doId	string	false	uuid	06618980-356b-4493-b276-d5d93a1aba71	Идентификатор ДО
+
+eventDate	string	true	yyyy-MM-dd	2022-12-12	Дата проведения мероприятия
+
+docTypeMdmCode	string	true	
+003	Тип документа 
+
+documentDate	string	true	yyyy-MM-dd	2024-11-06	Дата документа
+
+documentNumber	string	true	
+9999/К	Номер документа
+
+signerDoId	string	true	uuid	fe4be405-1d52-4292-ba22-dffe4ba98dde	Идентификатор подписанта
+
+digitalSign	boolean	true	
+false	Признак электронного подписания 
+
+csId	string	true	
+a9a4ec7b-7666-4d11-be91-390156836681	Идентификатор документа в моих документах
+
+sourceUpdatedAt	string	true	
+yyyy-MM-dd’T’HH:mm:ss.SSSSSSSSSZ миллисекунды до 6 знаков.
+
+Зависит от того до какой точности передает мастер сервис
+
+
+Дата изменения записи на стороне источника
