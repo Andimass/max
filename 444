@@ -1,0 +1,130 @@
+Created by Рыбак Максим Сергеевич [B], last modified by Малова Анастасия Витальевна on May 13, 2026
+Полезные ссылки:
+(NEW) Релиз 2. [Payroll.Validator →HCMDataMart.Viewer.Payroll] - checkDocuments - Сервис проверки документов сотрудника#_Rs
+
+ДЕВ
+Swagger /hcmdatamart/viewer/py/v1/documents/check  - http://app-hcmdatamart-viewer-payroll-ci01978215-hr-platform-dev2-dev.apps.dev-terra000001-ids.ocp.delta.sbrf.ru/api/swagger-ui/index.html#/
+
+API - http://app-hcmdatamart-viewer-payroll-ci01978215-hr-platform-dev2-dev.apps.dev-terra000001-ids.ocp.delta.sbrf.ru/api/hcmdatamart/viewer/py/v1/documents/check   
+
+ИФТ
+
+Swagger /hcmdatamart/viewer/py/v1/documents/check - https://sw-app-hcmdatamart-viewer-payroll.ci01978215.apps.ift-terra000008-idm.ocp.delta.sbrf.ru/api/swagger-ui/index.html#/
+
+API - https://sw-app-hcmdatamart-viewer-payroll.ci01978215.apps.ift-terra000008-idm.ocp.delta.sbrf.ru/api/hcmdatamart/viewer/py/v1/documents/check
+
+
+Версионность
+Версия
+
+Дата
+
+Постановщик
+
+Разработчик
+
+Содержание изменения
+
+
+
+
+
+
+
+
+
+Бизнес-требования
+Запуск проверок документов (ИНН, СНИЛС, Паспортные данные)  сервисом Payroll.Validator (Валидация данных):
+
+Регистрация полученных отклонений  в  ДКЗ/Perftracker - ссылка на спецификацию
+
+Реализация
+Запуск проверок осуществляется автоматически каждый день, согласно записи в "Реестре проверок" и "Матрицы проверок".
+
+Ссылка - Реестр проверок (validation_registry)
+
+Ссылка - Матрица проверок (validation_matrix)
+
+Алгоритм запуска проверки
+Определить что в Реестр проверок (validation_registry) validation_code.status ="active";
+Определить что в Матрица проверок (validation_matrix) validation_code.status ="active";
+Если в обоих таблицах status = "active", перейти к шагу (3);
+Если в одной из таблиц status = "inactive", проверка не запускается;
+Установить дату проверки (hireDate), равной дате сегодня минус 1 день;
+Запустить проверку.
+
+
+ Структура запроса проврки
+ Структура ответа
+Регистрация результатов проверок
+Результаты проверки сохраняются в таблицу  "Журнал результатов проверок (validation_log).
+
+Мэппинг записей
+1	ИД записи журнала 	registration_id 	uuid	
+Присваивается автоматически
+
+2	Код проверки	validation_code	string	
+Выполнить мэппинг по полю codeId и получит данные поля validation_code из таблицы validation_matrix
+
+3	Событие	event_reason	string	
+Выполнить мэппинг по полю validation_code и получит данные поля event_reason из таблицы validation_matrix
+
+4	Дата проверки	verification_date	date	
+Записать данные поля dateTime
+
+На фронт выводится в формате: "DD.MM.YYYY"
+
+5	Время проверки	verification_time	date	
+Записать данные поля dateTime
+
+На фронт выводится в формате "ЧЧ.MM.СС"
+
+6	ИД записи	do_id	
+uuid
+
+Записать данные поля doId
+7	ФИО	full_name	
+string
+
+Записать данные полей: lastName, firstName, middleName.
+
+На фронт выводится в формате: "ФИО"
+
+8	Табельный номер 	employee_number	
+varchar(8)
+
+Записать данные поля employeeNumber
+9	ИД сотрудника	person_id	
+string
+
+Записать данные поля personId
+10	Результат проверки	verification_status	string	
+Записать данные поля status
+
+11	Номер заявки для исправления	
+task_id
+
+uuid	
+Генерируется на стороне Payroll.Validator, при приёме массива отклонений. Возвращается БС в ответе.
+
+12	Рекомендуемое действие по исправлению	recommendation	string	
+Выполнить мэппинг по полю validation_code и получит данные поля recommendation из таблицы validation_matrix
+
+13	Статус исправления отклонений	fix_status	string	
+Заполняется и обновляется на основе событий получаемых от PM
+
+Обработка события жизненного цикла заявки (PM)
+
+14	Исправлено агентом	fixed_agent	string	В работе
+15	ИД отклонения	deviation_id	uuid	
+Присваивается автоматически
+
+
+
+16	Ответственный за исправление	fix_responsible_person	string	Заполняется на основании события полученного от PM
+Обработка события о ответственном об исправлении
+17	Код компании	company_id	string	В работе, будут присылать нам CR выставили
+18	Бизнес-сервис	business_service	string	
+Выполнить мэппинг по полю validation_code и получит данные поля business_serviсe из таблицы business_serviсe_dict
+
+19	Комментарий	comments	string	Не заполняется от данного сервиса
