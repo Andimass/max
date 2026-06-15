@@ -1,0 +1,275 @@
+- ============================================================================
+--  БЛОК ВАЛИДАЦИИ РНУ — ПОЛНАЯ СХЕМА БД (PostgreSQL / Pangolin)
+--  Задача: регулярные проверки РНУ + отправка отклонений в сервис Валидация
+--          (ИВ-27.1) и вывод ОК/не ОК в сервис УОД (гейт платёжек).
+--  Среда:  pgAdmin → Query Tool. Запускать целиком (одна транзакция).
+--
+--  Учтено по итогам проработки:
+--   * applicability проверок (QUARTERLY / DAILY-ЗОД / BOTH);
+--   * поля validation_result выровнены под контракт отправки
+--     (reasonId=code, message=error_text, verificationStatus=result,
+--      task_id=validator_request_no);
+--   * единый лог исходящих на ДВУХ потребителей (VALIDATION + UOD)
+--     с message_id (идемпотентность) и task_id (заявка из ответа);
+--   * ФИО/company/recommendation НЕ хранятся как отправляемые (их Валидатор
+--     берёт из своей Матрицы / агрегационной витрины) — recommended_action
+--     остаётся в реестре как источник для регистрации в Матрице;
+--   * авто-обновление updated_at триггером; индексы; комментарии; сид проверок;
+--   * заделы (validation_deviation, внешние ключи) — отдельными блоками.
+--
+--  Идемпотентно (IF NOT EXISTS + guard на типы), откат — внизу.
+--  gen_random_uuid(): PG 13+ в ядре; на старых — pgcrypto (создаётся ниже).
+-- ============================================================================
+ 
+BEGIN;
+ 
+-- ----------------------------------------------------------------------------
+-- 0. Схемы и расширения
+-- ----------------------------------------------------------------------------
+CREATE SCHEMA IF NOT EXISTS rnu_setting;
+CREATE SCHEMA IF NOT EXISTS rnu_report;
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+ 
+-- ----------------------------------------------------------------------------
+-- 1. Сервисная функция авто-обновления updated_at
+-- ----------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION rnu_report.set_updated_at() RETURNS trigger AS $$
+BEGIN
+    NEW.updated_at := now();
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+ 
+-- ----------------------------------------------------------------------------
+-- 2. ENUM-типы (идемпотентно)
+-- ----------------------------------------------------------------------------
+DO $$ BEGIN CREATE TYPE rnu_setting.validation_check_type    AS ENUM ('PRESENCE','FORMAT','LOGIC','CONTROL_NUMBER');                 EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DO $$ BEGIN CREATE TYPE rnu_setting.validation_severity      AS ENUM ('ERROR','WARNING');                                            EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DO $$ BEGIN CREATE TYPE rnu_setting.validation_check_status  AS ENUM ('ACTIVE','INACTIVE');                                          EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DO $$ BEGIN CREATE TYPE rnu_setting.validation_applicability AS ENUM ('QUARTERLY','DAILY','BOTH');                                    EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DO $$ BEGIN CREATE TYPE rnu_report.validation_result_kind    AS ENUM ('DETECTED','NOT_DETECTED');                                    EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DO $$ BEGIN CREATE TYPE rnu_report.validation_correction_status AS ENUM ('NEW','SENT','IN_PROGRESS','FIXED','REFORMED','CLOSED');    EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DO $$ BEGIN CREATE TYPE rnu_report.validation_overall_status  AS ENUM ('OK','WARNING','ERROR');                                      EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DO $$ BEGIN CREATE TYPE rnu_report.validation_send_readiness  AS ENUM ('NOT_READY','READY_TO_SEND','SENT');                          EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DO $$ BEGIN CREATE TYPE rnu_report.validation_send_status     AS ENUM ('SUCCESS','ERROR');                                           EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DO $$ BEGIN CREATE TYPE rnu_report.validation_send_target     AS ENUM ('VALIDATION','UOD');                                          EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+ 
+-- ============================================================================
+-- 3. rnu_setting.validation_check — РЕЕСТР ПРОВЕРОК (настроечная, расширяемая)
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS rnu_setting.validation_check (
+    id                 bigserial PRIMARY KEY,
+    code               varchar(10)  NOT NULL,                       -- код проверки (= reasonId при отправке), напр. V_001
+    name               varchar(255) NOT NULL,                       -- наименование
+    check_type         rnu_setting.validation_check_type   NOT NULL,-- наличие/формат/логика/контрольное число
+    severity           rnu_setting.validation_severity     NOT NULL,-- ошибка/предупреждение
+    error_code         varchar(4),                                  -- код ошибки для UI/уведомления (10/12/25)
+    error_text_tpl     text,                                        -- шаблон текста отклонения (-> message)
+    rule               text NOT NULL,                               -- правило/выражение проверки
+    target_entity      varchar(20),                                 -- PERSON_DATA / INCOME / DEDUCTION
+    applicability      rnu_setting.validation_applicability NOT NULL DEFAULT 'BOTH', -- квартальная / ежедневная (ЗОД) / обе
+    recommended_action text,                                        -- рекоменд. действие (источник для регистрации в Матрице Валидатора)
+    start_date         date NOT NULL,
+    end_date           date NOT NULL DEFAULT DATE '9999-12-31',
+    status             rnu_setting.validation_check_status NOT NULL DEFAULT 'ACTIVE',
+    created_at         timestamptz NOT NULL DEFAULT now(),
+    updated_at         timestamptz NOT NULL DEFAULT now(),
+    updated_by         varchar(50),
+    CONSTRAINT uq_validation_check_code_start UNIQUE (code, start_date),
+    CONSTRAINT ck_validation_check_dates      CHECK (end_date >= start_date)
+);
+ 
+COMMENT ON TABLE  rnu_setting.validation_check                    IS 'Реестр проверок РНУ (расширяемый каталог определений)';
+COMMENT ON COLUMN rnu_setting.validation_check.code              IS 'Код проверки; при отправке отклонения уходит как reasonId, мэппится в validation_code Матрицы Валидатора';
+COMMENT ON COLUMN rnu_setting.validation_check.applicability     IS 'Где применяется: QUARTERLY (квартальный отчёт) / DAILY (ежедневные ЗОД) / BOTH';
+COMMENT ON COLUMN rnu_setting.validation_check.recommended_action IS 'Рекомендация. В сообщение НЕ шлётся — регистрируется в Матрице Валидатора по коду; оттуда он её и берёт';
+ 
+DROP TRIGGER IF EXISTS trg_validation_check_upd ON rnu_setting.validation_check;
+CREATE TRIGGER trg_validation_check_upd BEFORE UPDATE ON rnu_setting.validation_check
+    FOR EACH ROW EXECUTE FUNCTION rnu_report.set_updated_at();
+ 
+CREATE INDEX IF NOT EXISTS ix_vc_status        ON rnu_setting.validation_check (status);
+CREATE INDEX IF NOT EXISTS ix_vc_applicability ON rnu_setting.validation_check (applicability);
+ 
+-- ============================================================================
+-- 4. rnu_report.validation_result — ЛОГ РЕЗУЛЬТАТОВ (проверка × запись РНУ)
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS rnu_report.validation_result (
+    id                   uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    check_code           varchar(10) NOT NULL,                          -- -> validation_check.code (по дате действия); = reasonId
+    job_id               uuid NOT NULL,
+    job_period_id        uuid,
+    person_id            uuid,                                          -- -> personId
+    do_id                uuid,                                          -- -> doId
+    employee_number      varchar(10),                                   -- -> employeeNumber (у Валидатора varchar8)
+    operation_id         varchar(30),                                   -- rnu_income.operation_id (локализация)
+    income_id            uuid,                                          -- rnu_income.id (если проверка по доходу)
+    service_id           varchar(30),                                   -- мастер-сервис (-> serviceId, опц. поле контракта)
+    result               rnu_report.validation_result_kind NOT NULL,    -- DETECTED/NOT_DETECTED (-> verificationStatus)
+    severity             rnu_setting.validation_severity,               -- денорм. на момент прогона
+    error_code           varchar(4),
+    error_text           text,                                          -- -> message (уникальный текст отклонения)
+    recommended_action   text,                                          -- локальная копия (для UI); в Валидацию не шлётся
+    checked_at           timestamptz NOT NULL DEFAULT now(),            -- -> verificationDate + verificationTime
+    deviation_id         uuid,                                          -- наш стабильный ключ отклонения
+    sent_to_validation   boolean NOT NULL DEFAULT false,
+    sent_at              timestamptz,
+    validator_request_no varchar(50),                                   -- = task_id (заявка), приходит в ответе Валидатора
+    correction_status    rnu_report.validation_correction_status NOT NULL DEFAULT 'NEW',
+    created_at           timestamptz NOT NULL DEFAULT now(),
+    updated_at           timestamptz NOT NULL DEFAULT now()
+);
+ 
+COMMENT ON TABLE  rnu_report.validation_result                     IS 'Лог результатов прогона проверок по (проверка × запись РНУ); источник отклонений и основа повторной сверки';
+COMMENT ON COLUMN rnu_report.validation_result.check_code          IS 'Ссылка на validation_check.code (по дате); уходит как reasonId';
+COMMENT ON COLUMN rnu_report.validation_result.error_text          IS 'Текст отклонения; уходит в контракт как message';
+COMMENT ON COLUMN rnu_report.validation_result.validator_request_no IS 'Номер заявки task_id, возвращаемый Валидатором на отправку (request-reply)';
+COMMENT ON COLUMN rnu_report.validation_result.correction_status   IS 'Жизненный цикл отклонения; отражает fix_status Валидатора (события PM)';
+ 
+DROP TRIGGER IF EXISTS trg_validation_result_upd ON rnu_report.validation_result;
+CREATE TRIGGER trg_validation_result_upd BEFORE UPDATE ON rnu_report.validation_result
+    FOR EACH ROW EXECUTE FUNCTION rnu_report.set_updated_at();
+ 
+CREATE INDEX IF NOT EXISTS ix_vr_period_person  ON rnu_report.validation_result (job_period_id, person_id);
+CREATE INDEX IF NOT EXISTS ix_vr_job            ON rnu_report.validation_result (job_id);
+CREATE INDEX IF NOT EXISTS ix_vr_deviation      ON rnu_report.validation_result (deviation_id);
+CREATE INDEX IF NOT EXISTS ix_vr_request_no     ON rnu_report.validation_result (validator_request_no);
+CREATE INDEX IF NOT EXISTS ix_vr_corr_status    ON rnu_report.validation_result (correction_status);
+CREATE INDEX IF NOT EXISTS ix_vr_to_send        ON rnu_report.validation_result (sent_to_validation, result)
+                                                WHERE result = 'DETECTED';
+ 
+-- ============================================================================
+-- 5. rnu_report.validation_summary — ИТОГ ПО СОТРУДНИКУ за период (ОК/не ОК)
+--    Грейн по умолчанию: (job_period_id, person_id). Для разреза по ДО —
+--    включить do_id в UNIQUE (см. закомментированный вариант).
+--    Питает UI-бейдж, гейт XML по ФЛ и ГЕЙТ ПЛАТЁЖЕК УОД.
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS rnu_report.validation_summary (
+    id                uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    job_id            uuid NOT NULL,
+    job_period_id     uuid NOT NULL,
+    person_id         uuid NOT NULL,
+    do_id             uuid,
+    employee_number   varchar(10),
+    validation_status rnu_report.validation_overall_status NOT NULL,    -- OK / WARNING / ERROR
+    error_count       int NOT NULL DEFAULT 0 CHECK (error_count   >= 0),
+    warning_count     int NOT NULL DEFAULT 0 CHECK (warning_count >= 0),
+    send_readiness    rnu_report.validation_send_readiness NOT NULL DEFAULT 'NOT_READY', -- «Готов к отправке»
+    last_checked_at   timestamptz NOT NULL DEFAULT now(),
+    created_at        timestamptz NOT NULL DEFAULT now(),
+    updated_at        timestamptz NOT NULL DEFAULT now(),
+    CONSTRAINT uq_validation_summary UNIQUE (job_period_id, person_id)
+    -- , CONSTRAINT uq_validation_summary_do UNIQUE (job_period_id, person_id, do_id)  -- вариант грейна по ФЛ×ДО
+);
+ 
+COMMENT ON TABLE  rnu_report.validation_summary                   IS 'Итог валидации по сотруднику за период: ОК/не ОК, счётчики, готовность к отправке; гейт платёжек УОД';
+COMMENT ON COLUMN rnu_report.validation_summary.validation_status IS 'OK = нет отклонений; WARNING = только предупреждения; ERROR = есть ошибки';
+COMMENT ON COLUMN rnu_report.validation_summary.send_readiness    IS 'NOT_READY/READY_TO_SEND/SENT — мутабельно (действие пользователя)';
+ 
+DROP TRIGGER IF EXISTS trg_validation_summary_upd ON rnu_report.validation_summary;
+CREATE TRIGGER trg_validation_summary_upd BEFORE UPDATE ON rnu_report.validation_summary
+    FOR EACH ROW EXECUTE FUNCTION rnu_report.set_updated_at();
+ 
+CREATE INDEX IF NOT EXISTS ix_vs_period_status ON rnu_report.validation_summary (job_period_id, validation_status);
+CREATE INDEX IF NOT EXISTS ix_vs_readiness     ON rnu_report.validation_summary (send_readiness);
+ 
+-- ============================================================================
+-- 6. rnu_report.validation_sending_log — АУДИТ ИСХОДЯЩИХ (Валидация + УОД)
+--    Один лог на двух потребителей: target = VALIDATION | UOD.
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS rnu_report.validation_sending_log (
+    id               uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    target           rnu_report.validation_send_target NOT NULL,        -- куда: Валидация или УОД
+    message_id       uuid,                                              -- наш messageId запроса (идемпотентность)
+    batch_id         uuid,                                              -- если объединяли отклонения в пачку
+    deviation_id     uuid,                                              -- если лог по одному отклонению
+    task_id          varchar(50),                                       -- номер заявки из ответа Валидатора
+    operation_type   varchar(20) NOT NULL DEFAULT 'CREATE_DEVIATION',
+    operation_status rnu_report.validation_send_status NOT NULL,        -- SUCCESS/ERROR (исход вызова)
+    payload          jsonb,                                             -- отправленное тело (аудит/реплей)
+    response_code    varchar(20),
+    response_message text,
+    error_code       varchar(20),
+    error_text       text,
+    created_at       timestamptz NOT NULL DEFAULT now()
+);
+ 
+COMMENT ON TABLE  rnu_report.validation_sending_log            IS 'Аудит исходящих уведомлений (Валидация / УОД); по образцу rnu_xml_sending_log';
+COMMENT ON COLUMN rnu_report.validation_sending_log.target     IS 'Потребитель: VALIDATION (массив отклонений) или UOD (гейт платёжек)';
+COMMENT ON COLUMN rnu_report.validation_sending_log.message_id IS 'Идентификатор запроса messageId — идемпотентность отправки';
+COMMENT ON COLUMN rnu_report.validation_sending_log.task_id    IS 'task_id (заявка), возвращённый Валидатором';
+ 
+CREATE INDEX IF NOT EXISTS ix_vsl_message   ON rnu_report.validation_sending_log (message_id);
+CREATE INDEX IF NOT EXISTS ix_vsl_task       ON rnu_report.validation_sending_log (task_id);
+CREATE INDEX IF NOT EXISTS ix_vsl_deviation ON rnu_report.validation_sending_log (deviation_id);
+CREATE INDEX IF NOT EXISTS ix_vsl_target    ON rnu_report.validation_sending_log (target, operation_status);
+ 
+-- ============================================================================
+-- 7. СИД стартовых проверок (черновик каталога; коды/тексты согласовать
+--    с методологом и зарегистрировать reasonId в Матрице Валидатора)
+-- ============================================================================
+INSERT INTO rnu_setting.validation_check
+    (code, name, check_type, severity, error_code, rule, target_entity, applicability, recommended_action, start_date)
+VALUES
+ ('V_001','Наличие фамилии и имени','PRESENCE','ERROR','10','last_name IS NULL OR first_name IS NULL','PERSON_DATA','BOTH','Заполнить ФИО сотрудника','2026-01-01'),
+ ('V_002','Наличие даты рождения','PRESENCE','ERROR','10','birthday IS NULL','PERSON_DATA','BOTH','Указать дату рождения','2026-01-01'),
+ ('V_003','Наличие/формат ИНН','FORMAT','WARNING','25','inn IS NULL OR length(inn) NOT IN (12)','PERSON_DATA','BOTH','Проверить и заполнить ИНН (12 цифр)','2026-01-01'),
+ ('V_004','Сверка налоговой базы','LOGIC','ERROR','12','base_amount <> income_amount - coalesce(sum_deduction,0)','INCOME','BOTH','Проверить вычеты и пересчитать базу','2026-01-01'),
+ ('V_005','Неотрицательность суммы дохода','CONTROL_NUMBER','ERROR','10','income_amount < 0','INCOME','BOTH','Проверить корректность начисления','2026-01-01')
+ON CONFLICT (code, start_date) DO NOTHING;
+ 
+COMMIT;
+ 
+-- ============================================================================
+-- 8. ЗАДЕЛ (опционально) — внешние ключи к существующим таблицам reportstax.
+--    Включать ПОСЛЕ проверки имён схем/таблиц и совпадения типов PK.
+-- ============================================================================
+-- BEGIN;
+-- ALTER TABLE rnu_report.validation_result
+--   ADD CONSTRAINT fk_vr_job        FOREIGN KEY (job_id)        REFERENCES rnu_report.job(id),
+--   ADD CONSTRAINT fk_vr_job_period FOREIGN KEY (job_period_id) REFERENCES rnu_report.job_period(id),
+--   ADD CONSTRAINT fk_vr_income     FOREIGN KEY (income_id)     REFERENCES rnu_report.rnu_income(id);
+-- ALTER TABLE rnu_report.validation_summary
+--   ADD CONSTRAINT fk_vs_job        FOREIGN KEY (job_id)        REFERENCES rnu_report.job(id),
+--   ADD CONSTRAINT fk_vs_job_period FOREIGN KEY (job_period_id) REFERENCES rnu_report.job_period(id);
+-- COMMIT;
+ 
+-- ============================================================================
+-- 9. ЗАДЕЛ (опционально) — validation_deviation: отклонение как сущность
+--    поверх прогонов. Вводить, если обратный статус деviation-/заявка-центричен
+--    (по контракту Валидатора). Пока ЖЦ ведётся на validation_result.
+-- ============================================================================
+-- CREATE TABLE IF NOT EXISTS rnu_report.validation_deviation (
+--     deviation_id      uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+--     check_code        varchar(10) NOT NULL,
+--     person_id         uuid,
+--     do_id             uuid,
+--     operation_id      varchar(30),
+--     first_detected_at timestamptz NOT NULL DEFAULT now(),
+--     validator_task_id varchar(50),                    -- заявка Валидатора (task_id)
+--     correction_status rnu_report.validation_correction_status NOT NULL DEFAULT 'NEW',
+--     closed_at         timestamptz,
+--     created_at        timestamptz NOT NULL DEFAULT now(),
+--     updated_at        timestamptz NOT NULL DEFAULT now()
+-- );
+ 
+-- ============================================================================
+-- ОТКАТ (выполнять отдельно при необходимости пересоздать с нуля)
+-- ============================================================================
+-- BEGIN;
+-- DROP TABLE IF EXISTS rnu_report.validation_sending_log;
+-- DROP TABLE IF EXISTS rnu_report.validation_summary;
+-- DROP TABLE IF EXISTS rnu_report.validation_result;
+-- DROP TABLE IF EXISTS rnu_setting.validation_check;
+-- DROP FUNCTION IF EXISTS rnu_report.set_updated_at();
+-- DROP TYPE IF EXISTS rnu_report.validation_send_target;
+-- DROP TYPE IF EXISTS rnu_report.validation_send_status;
+-- DROP TYPE IF EXISTS rnu_report.validation_send_readiness;
+-- DROP TYPE IF EXISTS rnu_report.validation_overall_status;
+-- DROP TYPE IF EXISTS rnu_report.validation_correction_status;
+-- DROP TYPE IF EXISTS rnu_report.validation_result_kind;
+-- DROP TYPE IF EXISTS rnu_setting.validation_applicability;
+-- DROP TYPE IF EXISTS rnu_setting.validation_check_status;
+-- DROP TYPE IF EXISTS rnu_setting.validation_severity;
+-- DROP TYPE IF EXISTS rnu_setting.validation_check_type;
+-- COMMIT;
