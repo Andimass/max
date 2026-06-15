@@ -1,3 +1,12 @@
+-- ============================================================
+--  Блок валидации РНУ — SQL для ER-диаграммы
+--  dbdiagram.io → Import → Import From PostgreSQL → вставить этот код.
+--  Версия со СВЯЗЯМИ: активные FOREIGN KEY + заглушки внешних таблиц.
+--  Для боевой БД использовать validation_block_db_full.sql
+--  (со схемами rnu_setting/rnu_report, триггерами, комментариями).
+-- ============================================================
+
+-- ---------- Перечисления ----------
 CREATE TYPE validation_check_type     AS ENUM ('PRESENCE','FORMAT','LOGIC','CONTROL_NUMBER');
 CREATE TYPE validation_severity       AS ENUM ('ERROR','WARNING');
 CREATE TYPE validation_check_status   AS ENUM ('ACTIVE','INACTIVE');
@@ -8,21 +17,21 @@ CREATE TYPE validation_overall_status AS ENUM ('OK','WARNING','ERROR');
 CREATE TYPE validation_send_readiness AS ENUM ('NOT_READY','READY_TO_SEND','SENT');
 CREATE TYPE validation_send_status    AS ENUM ('SUCCESS','ERROR');
 CREATE TYPE validation_send_target    AS ENUM ('VALIDATION','UOD');
- 
+
 -- ---------- Внешние таблицы reportstax (заглушки для связей) ----------
 CREATE TABLE job (
     id uuid PRIMARY KEY
 );
- 
+
 CREATE TABLE job_period (
     id     uuid PRIMARY KEY,
     job_id uuid REFERENCES job(id)
 );
- 
+
 CREATE TABLE rnu_income (
     id uuid PRIMARY KEY
 );
- 
+
 -- ---------- 1. Реестр проверок ----------
 CREATE TABLE validation_check (
     id                 bigserial PRIMARY KEY,
@@ -44,7 +53,7 @@ CREATE TABLE validation_check (
     updated_by         varchar(50),
     UNIQUE (code, start_date)
 );
- 
+
 -- ---------- 2. Лог результатов проверок ----------
 CREATE TABLE validation_result (
     id                   uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -71,7 +80,7 @@ CREATE TABLE validation_result (
     created_at           timestamptz NOT NULL DEFAULT now(),
     updated_at           timestamptz NOT NULL DEFAULT now()
 );
- 
+
 -- ---------- 3. Итог по сотруднику (результирующая) ----------
 CREATE TABLE validation_summary (
     id                uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -89,7 +98,7 @@ CREATE TABLE validation_summary (
     updated_at        timestamptz NOT NULL DEFAULT now(),
     UNIQUE (job_period_id, person_id)
 );
- 
+
 -- ---------- 4. Лог отправки (Валидация + УОД) ----------
 CREATE TABLE validation_sending_log (
     id               uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -107,3 +116,17 @@ CREATE TABLE validation_sending_log (
     error_text       text,
     created_at       timestamptz NOT NULL DEFAULT now()
 );
+
+-- ============================================================
+--  Связи, выраженные FK выше (их dbdiagram рисует линиями):
+--    validation_result.job_id        -> job.id
+--    validation_result.job_period_id -> job_period.id
+--    validation_result.income_id     -> rnu_income.id
+--    validation_summary.job_id       -> job.id
+--    validation_summary.job_period_id-> job_period.id
+--    job_period.job_id               -> job.id
+--
+--  Логические связи (ключ неуникальный/по дате) — линиями НЕ рисуются:
+--    validation_result.check_code  ~ validation_check.code (по дате действия)
+--    validation_sending_log.deviation_id ~ validation_result.deviation_id
+-- ============================================================
