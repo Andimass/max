@@ -1,0 +1,109 @@
+CREATE TYPE validation_check_type     AS ENUM ('PRESENCE','FORMAT','LOGIC','CONTROL_NUMBER');
+CREATE TYPE validation_severity       AS ENUM ('ERROR','WARNING');
+CREATE TYPE validation_check_status   AS ENUM ('ACTIVE','INACTIVE');
+CREATE TYPE validation_applicability  AS ENUM ('QUARTERLY','DAILY','BOTH');
+CREATE TYPE validation_result_kind    AS ENUM ('DETECTED','NOT_DETECTED');
+CREATE TYPE validation_correction_status AS ENUM ('NEW','SENT','IN_PROGRESS','FIXED','REFORMED','CLOSED');
+CREATE TYPE validation_overall_status AS ENUM ('OK','WARNING','ERROR');
+CREATE TYPE validation_send_readiness AS ENUM ('NOT_READY','READY_TO_SEND','SENT');
+CREATE TYPE validation_send_status    AS ENUM ('SUCCESS','ERROR');
+CREATE TYPE validation_send_target    AS ENUM ('VALIDATION','UOD');
+ 
+-- ---------- Внешние таблицы reportstax (заглушки для связей) ----------
+CREATE TABLE job (
+    id uuid PRIMARY KEY
+);
+ 
+CREATE TABLE job_period (
+    id     uuid PRIMARY KEY,
+    job_id uuid REFERENCES job(id)
+);
+ 
+CREATE TABLE rnu_income (
+    id uuid PRIMARY KEY
+);
+ 
+-- ---------- 1. Реестр проверок ----------
+CREATE TABLE validation_check (
+    id                 bigserial PRIMARY KEY,
+    code               varchar(10)  NOT NULL,
+    name               varchar(255) NOT NULL,
+    check_type         validation_check_type   NOT NULL,
+    severity           validation_severity     NOT NULL,
+    error_code         varchar(4),
+    error_text_tpl     text,
+    rule               text NOT NULL,
+    target_entity      varchar(20),
+    applicability      validation_applicability NOT NULL DEFAULT 'BOTH',
+    recommended_action text,
+    start_date         date NOT NULL,
+    end_date           date NOT NULL DEFAULT '9999-12-31',
+    status             validation_check_status NOT NULL DEFAULT 'ACTIVE',
+    created_at         timestamptz NOT NULL DEFAULT now(),
+    updated_at         timestamptz NOT NULL DEFAULT now(),
+    updated_by         varchar(50),
+    UNIQUE (code, start_date)
+);
+ 
+-- ---------- 2. Лог результатов проверок ----------
+CREATE TABLE validation_result (
+    id                   uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    check_code           varchar(10) NOT NULL,
+    job_id               uuid NOT NULL REFERENCES job(id),
+    job_period_id        uuid REFERENCES job_period(id),
+    person_id            uuid,
+    do_id                uuid,
+    employee_number      varchar(10),
+    operation_id         varchar(30),
+    income_id            uuid REFERENCES rnu_income(id),
+    service_id           varchar(30),
+    result               validation_result_kind NOT NULL,
+    severity             validation_severity,
+    error_code           varchar(4),
+    error_text           text,
+    recommended_action   text,
+    checked_at           timestamptz NOT NULL DEFAULT now(),
+    deviation_id         uuid,
+    sent_to_validation   boolean NOT NULL DEFAULT false,
+    sent_at              timestamptz,
+    validator_request_no varchar(50),
+    correction_status    validation_correction_status NOT NULL DEFAULT 'NEW',
+    created_at           timestamptz NOT NULL DEFAULT now(),
+    updated_at           timestamptz NOT NULL DEFAULT now()
+);
+ 
+-- ---------- 3. Итог по сотруднику (результирующая) ----------
+CREATE TABLE validation_summary (
+    id                uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    job_id            uuid NOT NULL REFERENCES job(id),
+    job_period_id     uuid NOT NULL REFERENCES job_period(id),
+    person_id         uuid NOT NULL,
+    do_id             uuid,
+    employee_number   varchar(10),
+    validation_status validation_overall_status NOT NULL,
+    error_count       int NOT NULL DEFAULT 0,
+    warning_count     int NOT NULL DEFAULT 0,
+    send_readiness    validation_send_readiness NOT NULL DEFAULT 'NOT_READY',
+    last_checked_at   timestamptz NOT NULL DEFAULT now(),
+    created_at        timestamptz NOT NULL DEFAULT now(),
+    updated_at        timestamptz NOT NULL DEFAULT now(),
+    UNIQUE (job_period_id, person_id)
+);
+ 
+-- ---------- 4. Лог отправки (Валидация + УОД) ----------
+CREATE TABLE validation_sending_log (
+    id               uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    target           validation_send_target NOT NULL,
+    message_id       uuid,
+    batch_id         uuid,
+    deviation_id     uuid,
+    task_id          varchar(50),
+    operation_type   varchar(20) NOT NULL DEFAULT 'CREATE_DEVIATION',
+    operation_status validation_send_status NOT NULL,
+    payload          jsonb,
+    response_code    varchar(20),
+    response_message text,
+    error_code       varchar(20),
+    error_text       text,
+    created_at       timestamptz NOT NULL DEFAULT now()
+);
