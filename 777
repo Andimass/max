@@ -1,0 +1,384 @@
+Created by Малова Анастасия Витальевна, last modified by Базанов Алексей Алексеевич [B] on Apr 13, 2026
+pending approval
+In Progress
+1.Назначение
+API для передачи массива отклонений сервисом Payroll.SFR в сервис Payroll.Validator.
+
+POST /api/v1/deviations/sfr
+
+Base Path: /api/v1
+Content-Type: application/json
+
+Accept: application/json
+
+2.Запрос
+2.1. Тело запроса
+Атрибут
+
+Тип данных
+
+Обязательность
+
+Описание
+
+Пример
+
+messageId
+
+string (UUID)
+
+Да
+
+Уникальный идентификатор запроса. Используется для идемпотентности
+
+9f3c2a1e-7d6b-4f0a-9c3a-1b2c3d4e5f60
+
+items
+
+array
+
+Да
+
+Массив отклонений (minItems = 1)
+
+[ { ... } ]
+
+2.2. Массив items[]
+Атрибут
+
+Тип данных
+
+Обязательность
+
+Описание
+
+Пример
+
+codeId
+
+string
+
+Да
+
+Внешний код проверки бизнес-сервиса
+
+1.1
+
+doId
+
+string (UUID)
+
+Да
+
+ID договорных отношений.
+
+74c0ffd1-5bb7-4b75-bff3-75f7d34c3365
+
+personId
+
+string (UUID)
+
+Да
+
+Идентификатор сотрудника
+
+434e33ab-0dad-4a52-85c9-5e2ac727684e
+
+message
+
+varchar(1000)
+
+Нет
+
+Текстовое описание отклонения, передаваемое Payroll.SFR
+
+Не заполнено обязательное поле документа
+
+verificationStatus
+
+string (enum)
+
+Да
+
+Результат проверки
+
+DEVIATIONS_FOUND
+
+businessService
+
+string (enum)
+
+Да
+
+Бизнес сервис
+
+Payroll.SFR
+
+verificationDate
+
+string (YYYY-MM-DD)
+
+Да
+
+Дата выявления
+
+2026-10-13
+
+verificationTime
+
+string (HH:MM:SS)
+
+Да
+
+Время выявления
+
+13:00:45
+
+Пример
+Один personId – одно отклонение
+Один personid – несколько отклонений
+Разные personId – разные отклонения
+JSON схема
+{
+  "$schema": "http://json-schema.org/draft-04/schema#",
+  "title": "Payroll.Validator — прием отклонений от сервиса СФР (Payroll.SFR)",
+  "description": "Запрос для передачи отклонений от бизнес-сервиса Payroll.SFR в Payroll.Validator (POST /api/v1/deviations/sfr).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "messageId",
+    "items"
+  ],
+  "properties": {
+    "messageId": {
+      "type": "string",
+      "format": "uuid",
+      "maxLength": 36,
+      "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+      "description": "Уникальный идентификатор запроса.",
+      "example": "9f3c2a1e-7d6b-4f0a-9c3a-1b2c3d4e5f60"
+    },
+    "items": {
+      "type": "array",
+      "minItems": 1,
+      "description": "Массив отклонений (каждый элемент = одно отклонение).",
+      "items": {
+        "$ref": "#/definitions/SfrDeviationItem"
+      }
+    }
+  },
+  "definitions": {
+    "SfrDeviationItem": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "doId",
+        "codeId",
+        "personId",
+        "verificationStatus",
+        "businessService",
+        "verificationDate",
+        "verificationTime"
+      ],
+      "properties": {
+        "doId": {
+          "type": "string",
+          "format": "uuid",
+          "maxLength": 36,
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+          "description": "ID договорных отношений сотрудника (UUID).",
+          "example": "74c0ffd1-5bb7-4b75-bff3-75f7d34c3365"
+        },
+        "codeId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 20,
+          "description": "Внешний код проверки бизнес-сервиса.",
+          "example": "1.1"
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1000,
+          "description": "Текстовое описание отклонения, передаваемое Payroll.SFR в свободной форме.",
+          "example": "Отсутствие серии паспорта"
+        },
+        "personId": {
+          "type": "string",
+          "format": "uuid",
+          "maxLength": 36,
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+          "description": "Идентификатор сотрудника (UUID).",
+          "example": "434e33ab-0dad-4a52-85c9-5e2ac727684e"
+        },
+        "verificationStatus": {
+          "type": "string",
+          "enum": [
+            "DEVIATIONS_FOUND",
+            "NO_DEVIATIONS"
+          ],
+          "description": "Результат проверки на стороне Payroll.SFR."
+        },
+        "businessService": {
+          "type": "string",
+          "enum": [
+            "Payroll.SFR"
+          ],
+          "description": "Код бизнес-сервиса."
+        },
+        "verificationDate": {
+          "type": "string",
+          "maxLength": 10,
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+          "description": "Дата выявления отклонения в формате YYYY-MM-DD.",
+          "example": "2026-10-13"
+        },
+        "verificationTime": {
+          "type": "string",
+          "maxLength": 8,
+          "pattern": "^\\d{2}:\\d{2}:\\d{2}$",
+          "description": "Время выявления отклонения в формате HH:MM:SS.",
+          "example": "13:00:45"
+        }
+      }
+    }
+  }
+}
+3. Ответ
+202 Accepted
+
+{
+  "messageId": "9f3c2a1e-7d6b-4f0a-9c3a-1b2c3d4e5f60",
+  "taskId": "bde9a0ad-f672-4f2e-b89e-fb3b70b8da9a"
+}
+taskld - номер заявки для исправления в журнале Payroll.Validator
+
+4. Ошибки
+400 Bad Request — ошибка формата запроса
+
+Возникает при нарушении синтаксиса JSON.
+
+Код ошибки
+
+Описание
+
+Пример причины
+
+JSON_PARSE_ERROR
+
+Некорректный формат JSON-тела
+
+Пропущена запятая, неверная структура
+
+{
+  "error": "BAD_REQUEST",
+  "details": [
+    {
+      "code": "JSON_PARSE_ERROR",
+      "message": "Некорректный формат JSON-тела"
+    }
+  ]
+}
+
+
+422 Unprocessable Entity — Ошибка валидации данных
+
+Возникает в случае, если тело запроса является корректным JSON, но содержит некорректные или неполные данные.
+
+{
+  "error": "UNPROCESSABLE_ENTITY",
+  "details": [
+    {
+      "code": "ERROR_CODE",
+      "field": "fieldName",
+      "index": 0,
+      "message": "Описание ошибки"
+    }
+  ]
+}
+Поля:
+
+error — общий код ошибки
+Всегда принимает значение UNPROCESSABLE_ENTITY.
+details[] — массив ошибок валидации.
+Может содержать одну или несколько ошибок.
+Для каждого элемента массива:
+
+code — машинный код ошибки
+field — имя поля, в котором обнаружена ошибка (если применимо)
+index — позиция элемента в массиве items[], к которому относится ошибка (начиная с 0)
+message — человекочитаемое описание ошибки
+Возможные коды ошибок:
+
+1.Обязательные поля
+
+REQUIRED_FIELD_MISSING
+
+Обязательное поле отсутствует в запросе.
+
+Пример
+{
+  "code": "REQUIRED_FIELD_MISSING",
+  "field": "personId",
+  "index": 0,
+  "message": "Обязательное поле personId отсутствует"
+}
+2.Неверный формат
+
+INVALID_FORMAT
+
+Значение поля не соответствует ожидаемому формату.
+
+Применяется для:
+
+UUID
+даты (формат YYYY-MM-DD)
+времени (формат HH:MM:SS)
+
+
+Пример
+{
+  "code": "INVALID_FORMAT",
+  "field": "verificationDate",
+  "index": 1,
+  "message": "Ожидается формат YYYY-MM-DD"
+}
+3.Бизнес-валидация
+
+MAPPING_NOT_FOUND
+
+Код ошибки не найден
+
+
+
+Пример
+{
+  "code": "MAPPING_NOT_FOUND",
+  "field": "codeId",
+  "index": 2,
+  "message": "Не найден мэппинг для businessService=Payroll.SFR и codeId=4.8"
+}
+4.INVALID_VALUE
+
+Значение поля не входит в допустимый перечень значений (enum).
+
+Применяется для полей с ограниченным набором допустимых значений, таких как:
+- verificationStatus
+- businessService
+
+Допустимые значения:
+
+verificationStatus:
+- DEVIATIONS_FOUND
+
+- NO_DEVIATIONS
+businessService:
+- Payroll.SFR
+
+Пример
+{
+    "code": "INVALID_VALUE",
+    "field": "verificationStatus",
+    "index": 0,
+    "message": "Недопустимое значение verificationStatus"
+}
