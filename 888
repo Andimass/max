@@ -1,0 +1,184 @@
+DataMarketHeaders.v1
+Актуальная версия
+[ Сущности ] [ Атрибуты ]
+Инструкция
+
+Кластер	
+Расчет зарплаты
+
+Название поддомена	
+Драйвер расчета зарплаты
+
+Архитектор ПО	
+Танаков Сергей Анатольевич
+
+Архитектор поддомена	
+Танаков Сергей Анатольевич
+
+Имя агрегата	
+DataMarketHeaders
+Описание	
+Заголовки результатов расчета заработной платы
+Сервис	
+DataMarket(CI07660502)
+Имя родительской сущности	
+dmHeaders
+Primary Key родительской сущности	
+calcHeaderId
+Топик	
+hrp.app.payrolldatamarket.domain.dmheaders
+Статус	
+ Актуальная версия  
+
+Версия	
+v1.0.0
+Сущности
+
+
+Export to CSV
+Имя сущности
+
+Техническое имя сущности
+
+Имя родительской сущности   
+PK родительской сущности
+API (с ссылкой)
+Таблица Пульс
+Объект SAP
+
+Глубина переноса из SAP 
+
+Ссылка на модель синхронизации SAP-Пульс
+Название регистра в архиве
+Ссылки на документацию
+
+Комментарий
+Ошибка
+Результаты расчета зарплаты	dmHeaders	
+
+
+etl_org_calc_header	PCL2	
+
+
+
+
+Атрибуты
+Export to CSV
+Техническое имя сущности
+Бизнес атрибут
+Техническое имя атрибута
+Определение
+Тип
+Формат
+Nullable
+
+Foreign Key
+
+Дополнительные требования
+
+Тег SafeData
+Меппинг на альтернативные техназвания
+Атрибут SAP
+Комментарий
+dmHeaders	Заголовок расчета	calcHeaderId	Идентификатор расчёта	uuid	UUID	false	
+
+
+
+
+
+dmHeaders	Заголовок расчета	payrollId	Идентификатор физ.лица для расчёта	uuid	UUID	false	
+
+
+
+
+
+dmHeaders	Заголовок расчета	personId	Идентификатор физ.лица	uuid	UUID	false	
+
+
+
+
+
+dmHeaders	Заголовок расчета	doId	Идентификатор трудовых отношений	uuid	UUID	false	
+
+
+
+
+
+dmHeaders	Заголовок расчета	tabelId	Идентификатор Табеля	uuid	UUID	true	
+
+
+
+
+
+dmHeaders	Заголовок расчета	seqnr	Номер расчета 	int4	
+false	
+
+
+
+
+
+dmHeaders	Заголовок расчета	calcDate	Дата расчета	date	YYYY-MM-DD	false	
+
+
+
+
+
+dmHeaders	Заголовок расчета	startDate	Дата начала расчета	date	YYYY-MM-DD	false	
+
+
+
+
+
+dmHeaders	Заголовок расчета	endDate	Дата окончания расчета	date	YYYY-MM-DD	false	
+
+
+
+
+
+dmHeaders	Заголовок расчета	dateFor	Дата для какого периода расчёт	date	YYYY-MM-DD	false	
+
+
+
+
+
+dmHeaders	Заголовок расчета	department	Единица для расчёта	varchar(2)	string	false	
+
+
+
+
+minLength: 2
+dmHeaders	Заголовок расчета	calculationType	Тип расчета	varchar(4)	string	true	
+
+
+
+
+maxLength: 4
+dmHeaders	Заголовок расчета	appVersion	Версия приложения	varchar(12)	string	false	
+
+
+
+
+maxLength: 12
+dmHeaders	Заголовок расчета	dateChanged	Дата/время изменения	timestamp	yyyy-MM-dd’T’HH:mm:ss.SSSZ	false	
+
+
+
+
+
+dmHeaders	Заголовок расчета	profileType	Тип профиля	varchar(30)	string	false	
+
+
+
+
+maxLength: 30
+
+
+
+
+
+Входящие ссылки
+Page: .Табель учета рабочего времени v01.007
+Page: ReportsDebtsCreditorDebt.v0.0.1
+Page: АрхС.12.02.Payroll.DataMarket.2026Q2
+Page: Подключение к "Доменным событиям"
+Page: Реестр доменных событий
