@@ -1,0 +1,174 @@
+Получение xml файла отчета РНУ НДФЛ из ЕАСУП
+Created by Пахомова Марина Григорьевна, last modified on Jun 16, 2026
+1. Получение уведомления о загрузке файла в ContentStorage (реализовано в задаче HRPY-21984)
+
+После успешной передачи файла из ИТФС в ContentStarage с наименование, содержащий префикс CI08449473, в топик кафки hrp.app.payroll-reports-tax.tfs.notification создается сообщение.
+
+Топик кафки ифт	https://hr-dev.sberbank.ru/corax-ui/ift/ui/clusters/ift-events-blk/all-topics/hrp.app.payroll-reports-tax.tfs.notification/messages?keySerde=String&valueSerde=String
+Структура сообщения: Kafka finish
+
+{
+    "header": {
+        "id": "5205eaed-c488-403c-b5c6-476aca798585",
+        "eventType": "CREATE",
+        "createdAt": 1778227207.9894443
+    },
+    "content": {
+        "id": 54115,
+        "fileName": "CI08449473_38_21_2026_FA163E862C971FD192D677DFE65B9D29.zip",
+        "fileSize": 1195,
+        "path": "/TFS/HRPLT/to/SAPEASUP/Payroll",
+        "pathCs": "payroll-reports-tax/upload",
+        "status": "FINISH",
+        "hash": "310B9DCA0335D3921521FBE18FFE5775D42CFF9536DA12DF60EF80308C5291F7",
+        "signatureVerification": "SUCCESS",
+        "unlockedByCs": true,
+        "messagesError": null,
+        "recipientMessageServiceName": "CI08449473_Payroll"
+    }
+}
+          
+
+2. Сохранение данных в БД с таблицу (новое)
+При появлении сообщения в топик кафки hrp.app.payroll-reports-tax.tfs.notification требуется создать запись в таблице rnu_report.external_rnu:
+
+id
+
+Генерируется автоматически
+header_id
+
+Значение атрибута header.id 
+file_id	Значение атрибута content.id
+file_name	Значение атрибута content.fileName
+file_size	Значение атрибута content.fileSize
+hash	Значение атрибута content.hash
+status	Значение атрибута content.status
+status_error_message	Значение атрибута content.messagesError
+signature_verification	Значение атрибутаcontent.signatureVerification
+process_status	Значение "NEW"
+process_message	Не заполняется
+created_at	Текущая дата создания записи
+job_id	Не заполняется
+3. Получение файла из ContentStorage (реализовано в задаче HRPY-21984 + новое)
+При получении сообщения в кафке с атрибутом "status" = "FINISH" требуется обратиться в ContentStorage и получить файл по ручке GET  /api/1/{url}
+
+Полезные ссылки: Content Storage#CS
+
+Файл РНУ НДФЛ из САП сохраняется в партиции payroll-reports-tax в папке /payroll-reports-tax/upload
+Посмотреть наличие файла в папке можно по ссылке: https://hr-ift.sberbank.ru/platform/content-storage-admin/payroll-reports-tax/private/upload
+
+Метод для получения файла: GET  /api/1/{url},
+где url - [название партиции]/[название папки]/[file]
+
+[название партиции]/[название папки] - значение атрибута pathCs из сообщения
+[file] - значение атрибута fileName из сообщения
+Пример: GET  /api/1/payroll-reports-tax/upload/CI08449473_38_21_2026_FA163E862C971FD192D677DFE65B9D29.zip
+
+
+
+Если удалось получить файл в формате архива (код 200), то найти запись в таблице rnu_report.external_rnu по полю file_name, установить значение "PROCESSING" у поля process_status, зафиксировать значение id и перейти на следующий шаг.
+
+Иначе (код ответа ≠ 200). Найти запись в таблице rnu_report.external_rnu по полю file_name, установить значение "ERROR" у поля process_status и заполнить поле process_message в соответствии с атрибутом message объекта error. Выполнить отправку статуса обработки файла в SAP 3. Отправка статуса обработки файла в SAP , заполнив атрибут status = 2, message = Сбой загрузки. Завершить сценарий
+
+
+
+4. Обработка архива из ContentStorage (новое)
+Шаг 1. Разархивировать папку. Если возникли ошибки, то в таблице rnu_report.external_rnu установить значение "ERROR" у поля process_status и заполнить поле process_message значением "Ошибка при разархивировании".
+
+Шаг 2. По каждому полученному файлу необходимо создать запись в таблице external_xml_file
+
+id
+
+Генерируется автоматически
+external_rnu_id
+
+Значение external_rnu.id, полученного на предыдущем шаге
+job_period_id	Не заполняется
+file_name	Имя файла
+file_content	Содержимое файла
+status	
+Устанавливается значение "NEW"
+
+error_message	Не заполняется
+created_at	Текущая дата создания записи
+
+
+Шаг 3. Создание записи в таблице rnu_report.job 
+
+id
+
+Генерируется автоматически
+report_type	Указывается значение quarterly 
+filter	
+Примечание: Формат имени архива из ContentStorage имеет следующий вид: PREFICS_EE_PP_YYYY_NNNNNNNNNNNN.zip,
+
+PREFICS - константа равная CI08449473;
+EE – ЕР;
+PP – идентификатор отчётного периода;
+YYYY – год отчётного периода;
+NNNNNNNNNNNN – случайно сгенерированное число или UUID
+
+
+Поле состоит из нескольких значений: {"year": "", "quarter": "", "department": ""}
+
+year: заполняется YYYY из наименования файла
+quarter: берется значение PP из наименования файла и по таблице rnu_setting.period определяем значение quarter_no в записи, где значение rnu_period = PP
+department: берется значение EE из наименования файла и по таблице rnu_setting.cu_be_relation определяем значение business_unit_code в записи, где значение в столбце calc_unit_code = EE
+status	
+Устанавливается значение PROCESSING
+
+source	
+Устанавливается значение SAP
+
+created_at	Текущая дата и время
+
+
+Шаг 4. В таблице rnu_report.external_rnu дообогатить запись значением job.id с шага 3 в поле job_id
+
+Шаг 5. У созданных на шаге 2 записей в таблице external_xml_file проанализировать значение file_name. Структура имени аналогична структуре, формируемых файлов на стороне ПУЛЬС для ФП НДФЛ
+
+<Код подразделения><Код АСНУ (тип доходов)><Код периода><Календарный год><GUID>, где
+
+<Код подразделения>
+
+17
+
+_______99_0000_00
+<Код АСНУ (тип доходов>
+
+4
+
+1000
+<Код периода>
+
+2
+
+21
+<Год>
+
+4
+
+2025
+<GUID>
+
+32
+
+00000000000016370355101016303261
+Требуется для каждого уникального значения Код периода + год создать запись в таблице rnu_report.job_period
+
+id	Генерируется автоматически
+job_id
+
+job.id из шага 3
+report_date	Последний день квартала, к которому относятся Код периода + год, предварительно определив квартал по коду периода с помощью таблицы rnu_setting.period: значение quarter_no в записи, где значение rnu_period = <Код периода>
+Шаг 6. В таблице rnu_report.external_xml_file дообогатить запись значением job_period.id с шага 5 в поле job_period_id в зависимости от <Код периода><Календарный год> в имени файла
+
+Шаг 7. Выполнить обработку каждого файла согласно 2. Обработка xml файла отчета РНУ НДФЛ из ЕАСУП
+
+Шаг 8. После успешной обработки всех файлов необходимо изменить поле status таблицы rnu_report.external_rnu на SUCCESS. Если имеются файлы с ошибочным статусом, то изменить поле status таблицы rnu_report.external_rnu на ERROR с process_message = "Не удалось обработать файл(-ы)"
+
+Шаг 9. У записи таблицы rnu_report.external_rnu из шага 3 поменять поле status на DONE, если обработка всех файлов прошла успешно. Иначе - установить значение ERROR
+
+Шаг 10. Выполнить отправку статуса обработки файла в SAP 3. Отправка статуса обработки файла в SAP, заполнив атрибут status = 1, message = Файл успешно загружен в ПУЛЬС, если обработка всех файлов прошла успешно. Иначе - установить значение status = 3, message = Ошибка данных
+Завершить сценарий
+
