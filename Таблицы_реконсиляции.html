@@ -1,0 +1,72 @@
+<!DOCTYPE html><html lang="ru"><head><meta charset="utf-8">
+<style>
+body{font-family:Arial,sans-serif;font-size:14px;color:#172b4d;margin:24px;}
+h3{margin:24px 0 6px;}
+table{border-collapse:collapse;margin-bottom:8px;}
+th,td{border:1px solid #c1c7d0;padding:6px 10px;text-align:left;vertical-align:top;}
+th{background:#f4f5f7;font-weight:bold;}
+</style></head><body>
+<p>Открой в браузере. Выдели таблицу (клик в первую ячейку → Shift+клик в последнюю, или просто протяни мышью), Ctrl+C, вставь в редактор Confluence.</p>
+<h3>reconciliation_xml_session (поля)</h3>
+<table>
+<tr><th>Поле</th><th>Тип</th><th>Назначение</th></tr>
+<tr><td>id</td><td>uuid PK</td><td>Идентификатор сессии</td></tr>
+<tr><td>job_id / job_period_id / external_rnu_id</td><td>uuid</td><td>Связки с заданием и входящим файлом (опц.)</td></tr>
+<tr><td>report_kind</td><td>varchar(20)</td><td>Тип отчёта (RNU_NDFL)</td></tr>
+<tr><td>legacy_file_name</td><td>varchar(255)</td><td>Имя файла из SAP</td></tr>
+<tr><td>service_file_name</td><td>varchar(255)</td><td>Имя файла из Пульс</td></tr>
+<tr><td>status</td><td>enum</td><td>PENDING/IN_PROGRESS/COMPLETED/DISCREPANCIES/FAILED</td></tr>
+<tr><td>error_message</td><td>text</td><td>Текст при FAILED</td></tr>
+<tr><td>started_at / finished_at / created_at / updated_at</td><td>timestamptz</td><td>Тайминги</td></tr>
+</table>
+<h3>reconciliation_xml_total (поля)</h3>
+<table>
+<tr><th>Поле</th><th>Тип</th><th>Назначение</th></tr>
+<tr><td>id</td><td>bigserial PK</td><td></td></tr>
+<tr><td>session_id</td><td>uuid</td><td>→ session</td></tr>
+<tr><td>block_name / tag_name / attribute_name</td><td>varchar</td><td>Блок/тег/атрибут</td></tr>
+<tr><td>legacy_value / service_value</td><td>text</td><td>Значения SAP / Пульс</td></tr>
+<tr><td>legacy_attribute_value / service_attribute_value</td><td>text</td><td>Значения атрибутов</td></tr>
+</table>
+<h3>reconciliation_xml_person (поля)</h3>
+<table>
+<tr><th>Поле</th><th>Тип</th><th>Назначение</th></tr>
+<tr><td>id</td><td>bigserial PK</td><td></td></tr>
+<tr><td>session_id</td><td>uuid</td><td>→ session</td></tr>
+<tr><td>snils / taxpayer_id</td><td>varchar</td><td>СНИЛС / ИНП</td></tr>
+<tr><td>block_name / tag_name / attribute_name</td><td>varchar</td><td>Блок/тег/атрибут</td></tr>
+<tr><td>operation_id / income_date</td><td>varchar/date</td><td>Локализация (операция / дата дохода)</td></tr>
+<tr><td>legacy_value / service_value</td><td>text</td><td>Значения SAP / Пульс</td></tr>
+</table>
+<h3>Маппинг XML → таблицы</h3>
+<table>
+<tr><th>Часть XML</th><th>Блок/теги</th><th>Таблица</th></tr>
+<tr><td>Неперсон.</td><td>Служебная часть: КодПодр, КодАС, ТипИнф, ДатаОтч; заголовок ИнфЧасти: ПериодОтч, ОтчетГод</td><td>reconciliation_xml_total</td></tr>
+<tr><td>Перс. (ИНП+СНИЛС)</td><td>ПолучДох; СведОпер→СведДохНал/СведВыч/СведАванс</td><td>reconciliation_xml_person</td></tr>
+</table>
+<h3>Альтернативные сценарии / ошибки</h3>
+<table>
+<tr><th>Условие</th><th>Результат</th></tr>
+<tr><td>Не определён отчёт / пара файлов</td><td>session.status=FAILED, error_message</td></tr>
+<tr><td>Ошибка распаковки / парсинга legacy или service</td><td>FAILED, error_message</td></tr>
+<tr><td>Несовпадение версии схемы XSD</td><td>см. раздел 9</td></tr>
+<tr><td>Расхождения найдены</td><td>DISCREPANCIES (строки в total/person)</td></tr>
+<tr><td>Расхождений нет</td><td>COMPLETED</td></tr>
+</table>
+<h3>Пример: reconciliation_xml_session</h3>
+<table>
+<tr><th>id</th><th>legacy_file_name</th><th>service_file_name</th><th>status</th></tr>
+<tr><td>r-1001</td><td>…261.xml (SAP)</td><td>…733.xml (Пульс)</td><td>DISCREPANCIES</td></tr>
+</table>
+<h3>Пример: reconciliation_xml_person</h3>
+<table>
+<tr><th>session_id</th><th>snils</th><th>taxpayer_id</th><th>block_name</th><th>tag_name</th><th>operation_id</th><th>legacy_value</th><th>service_value</th></tr>
+<tr><td>r-1001</td><td>140-320-188-96</td><td>0398815070</td><td>СведДохНал</td><td>СуммДохНач</td><td>0011002223…01</td><td>11058.09</td><td>11058.90</td></tr>
+<tr><td>r-1001</td><td>140-320-188-96</td><td>0398815070</td><td>СведВыч</td><td>СумТекВыч</td><td>0011002223…01</td><td>1000</td><td>(пусто)</td></tr>
+</table>
+<h3>Пример: reconciliation_xml_total</h3>
+<table>
+<tr><th>session_id</th><th>block_name</th><th>tag_name</th><th>legacy_value</th><th>service_value</th></tr>
+<tr><td>r-1001</td><td>Служебная часть</td><td>ДатаОтч</td><td>31.12.2024</td><td>30.12.2024</td></tr>
+</table>
+</body></html>
