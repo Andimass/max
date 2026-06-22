@@ -1,0 +1,61 @@
+=== reconciliation_xml_session (поля) ===
+| Поле | Тип | Назначение |
+| --- | --- | --- |
+| id | uuid PK | Идентификатор сессии |
+| job_id / job_period_id / external_rnu_id | uuid | Связки с заданием и входящим файлом (опц.) |
+| report_kind | varchar(20) | Тип отчёта (RNU_NDFL) |
+| legacy_file_name | varchar(255) | Имя файла из SAP |
+| service_file_name | varchar(255) | Имя файла из Пульс |
+| status | enum | PENDING/IN_PROGRESS/COMPLETED/DISCREPANCIES/FAILED |
+| error_message | text | Текст при FAILED |
+| started_at / finished_at / created_at / updated_at | timestamptz | Тайминги |
+
+=== reconciliation_xml_total (поля) ===
+| Поле | Тип | Назначение |
+| --- | --- | --- |
+| id | bigserial PK | - |
+| session_id | uuid | -> session |
+| block_name / tag_name / attribute_name | varchar | Блок/тег/атрибут |
+| legacy_value / service_value | text | Значения SAP / Пульс |
+| legacy_attribute_value / service_attribute_value | text | Значения атрибутов |
+
+=== reconciliation_xml_person (поля) ===
+| Поле | Тип | Назначение |
+| --- | --- | --- |
+| id | bigserial PK | - |
+| session_id | uuid | -> session |
+| snils / taxpayer_id | varchar | СНИЛС / ИНП |
+| block_name / tag_name / attribute_name | varchar | Блок/тег/атрибут |
+| operation_id / income_date | varchar/date | Локализация (операция / дата дохода) |
+| legacy_value / service_value | text | Значения SAP / Пульс |
+
+=== Маппинг XML -> таблицы ===
+| Часть XML | Блок/теги | Таблица |
+| --- | --- | --- |
+| Неперсон. | Служебная часть: КодПодр, КодАС, ТипИнф, ДатаОтч; заголовок ИнфЧасти: ПериодОтч, ОтчетГод | reconciliation_xml_total |
+| Перс. (ИНП+СНИЛС) | ПолучДох; СведОпер->СведДохНал/СведВыч/СведАванс | reconciliation_xml_person |
+
+=== Альтернативные сценарии / ошибки ===
+| Условие | Результат |
+| --- | --- |
+| Не определён отчёт / пара файлов | session.status=FAILED, error_message |
+| Ошибка распаковки / парсинга legacy или service | FAILED, error_message |
+| Несовпадение версии схемы XSD | см. раздел 9 |
+| Расхождения найдены | DISCREPANCIES (строки в total/person) |
+| Расхождений нет | COMPLETED |
+
+=== Пример: reconciliation_xml_session ===
+| id | legacy_file_name | service_file_name | status |
+| --- | --- | --- | --- |
+| r-1001 | …261.xml (SAP) | …733.xml (Пульс) | DISCREPANCIES |
+
+=== Пример: reconciliation_xml_person ===
+| session_id | snils | taxpayer_id | block_name | tag_name | operation_id | legacy_value | service_value |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| r-1001 | 140-320-188-96 | 0398815070 | СведДохНал | СуммДохНач | 0011002223…01 | 11058.09 | 11058.90 |
+| r-1001 | 140-320-188-96 | 0398815070 | СведВыч | СумТекВыч | 0011002223…01 | 1000 | (пусто) |
+
+=== Пример: reconciliation_xml_total ===
+| session_id | block_name | tag_name | legacy_value | service_value |
+| --- | --- | --- | --- | --- |
+| r-1001 | Служебная часть | ДатаОтч | 31.12.2024 | 30.12.2024 |
