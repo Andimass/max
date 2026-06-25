@@ -1,1 +1,309 @@
-Правильно понимаю: две строки с одним epk_id и разными do_id уходят как два отдельных элемента epk_operations, каждый со своим system_client_id = своим do_id? То есть system_client_id берётся на уровне операции (строки), а не агрегируется на epk_id?
+Получение данных прогонов
+Акторы	
+Сервис УОД (MOD)
+Налоговая отчетность (ReportsTax)
+Результаты расчета (DataMarket)
+Мастер Система НДФЛ (ПКАП1012)
+Предусловия	
+ReportsTax слушает топик для получения данных о заблокированных расчетах
+DataMarket отправил сообщение о прикреплении второй подписи к прогону в топик 
+Триггер	
+Новое сообщение в топике
+Основной
+сценарий	
+ReportsTax валидирует структуру события
+Если все ОК - след. шаг
+Иначе - игнорирует событие
+ReportsTax сохраняет данные в таблице calc_block со статусом N (new)
+ReportsTax запрашивает данные в DataMarket (rest метод) 
+ReportsTax изменяет статус в таблице calc_block на P  
+ReportsTax сохраняет ответ метода в таблицу status_send_dm
+ReportsTax слушает топик ответов по датасету 
+Если данные получены успешно - сохраняет в таблице employee_py_nob со статусом R, в таблицах calc_block и status_send_dm статус изменяет на S(success) и переходит к след.шагу
+Иначе - изменяет статус в таблицах calc_block и status_send_dm на E(error). См. 
+ReportsTax отправляет полученные данные в Мастер Систему и изменяет статус в таблице employee_py_nob на P(processing)
+Мастер Система обрабатывает полученные данные
+ReportsTax ожидает сообщение в ответном топике
+Сообщение появилось - след.шаг
+Иначе - после истечения тайм-аута изменяет статус на E, создает инцидент
+ReportsTax обрабатывает событие
+ОК - изменяет статус в таблице employee_py_nob на S(success)
+Иначе - изменяет статус на E, создает инцидент.
+Сценарий считается завершенным.
+
+Получение данных второй подписи прогона
+Топик: предоставит DataMarket.
+
+Mock топик для разработки и тестирования: 
+
+Кластер Kafka
+pvlsq-mock00081.sigma.sbrf.ru:9092,pvlsq-mock00082.sigma.sbrf.ru:9092,pvlsq-mock00083.sigma.sbrf.ru:9092,pvlsq-mock00084.sigma.sbrf.ru:9092,pvlsq-mock00085.sigma.sbrf.ru:9092,pvlsq-mock00086.sigma.sbrf.ru:9092
+
+Префикс именования топиков
+reportstaxmock
+
+Входящий топик
+
+reportstaxmock.signedrun
+
+Ответный топик
+
+reportstaxmock.RPL.signedrun
+
+В данные топики можно отправлять данные через SberMock для ReportsTax
+
+Тело события
+runId	
+Id прогона	int	Y	
+runData	
+Массив с данными для поиска расчетов в DataMarket	
+array
+
+(object)
+
+Y	
+
+calcHeaderId	Идентификатор заголовка расчета	string	Y	b922ff95-0de1-4a2e-98b0-170a89d0bd72
+
+doIds	Список do_id из прогона	array	Y	["b922ff95-0de1-4a2e-98b0-170a89d0bd72","c922ff95-0de1-4a2e-98b0-170a89d0bd73"]
+package	
+Номер пакета 	int	N	100
+size	
+Количество пакетов в прогоне 	int	N	100
+ Expand source
+При появлении события в топике, сохраняем данные в таблицу calc_block, со статусом N. 
+
+Таблица calc_block
+calc_block - заблокированные/подтвержденные расчеты подписанные второй подписью
+
+id	Идентификатор записи	PK	Y	b922ff95-0de1-4a2e-98b0-170a89d0bd72	minLength: 36
+maxLength: 36
+format: uuid
+run_id	ИД прогона	
+
+b922ff95-0de1-4a2e-98b0-170a89d0bd72	minLength: 36
+maxLength: 36
+format: uuid
+keys_header_id	Идентификатор заголовка расчета	
+Y	b922ff95-0de1-4a2e-98b0-170a89d0bd72	minLength: 36
+maxLength: 36
+format: uuid
+do_id	Идентификатор договорных отношений	
+Y	b922ff95-0de1-4a2e-98b0-170a89d0bd72	minLength: 36
+maxLength: 36
+format: uuid
+seqnr	Порядковый номер расчёта (версия расчета)	
+Y	1	format: int64
+date_changed	Дата и время обновления расчёта	
+Y	2025-03-31T13:39:43.785Z	format: date-time
+run_status	Статус запроса данных и отправки прогона в МС	
+Y	N (new), E(error), P(processing), S(success), С(cancelled)	format: enum
+storno	Признак сторнирования расчета. (по умолчанию пустой)	
+N	1	format: int64
+reason	Описание ошибки, если прогон не выплачен	
+N	Не получили подтверждения от MP	format: text
+created_at	Дата создания записи в таблице	
+Y	2025-03-31T13:39:43.785Z	format: date-time
+updated_at	Дата обновления записи в таблице	
+N	2025-03-31T13:39:43.785Z	format: date-time
+Новая запись, где run_status = N или E,  в таблице calc_block, является триггером для запроса данных из DataMarket. 
+
+Получение НОБ из DataMarket
+Если в таблице calc_block появилась новая запись со статусом N или запись со статусом Е, то:
+
+Система забирает строки с подходящим статусом
+Изменяет status_send и calc_block в строках на P
+Из таблицы orgcalc_tax_setting забирает все уникальные pay_type
+Формирует запрос в DataMarket и вызывает метод
+Если в ответе 200 ОК - сохраняет requestId из ответа в таблицу status_send_dm, устанавливает статус P и переходит к след. шагу
+Иначе - проставляет status_send_dm.status = E, в status_send_dm.description вставляет "ошибка запроса" или описание ошибки из ответа метода
+Система слушает топик kafka на наличие сообщение с requestId = requestId из ответа метода
+Система валидирует событие
+Если ОК - след. шаг
+Иначе - присваивает status = E, параметр errorMessage в массиве error сохраняет в  status_send_dm.description
+Система сохраняет данные НОБ полученные от DataMarket в таблицу employee_py_nob со статусом R. Учитывая кол-во пакетов (packetId, size, page) в сообщении.
+Если весь пакет сохранен успешно - присвоить статус S в status_send_dm.status и calc_block.status
+Если в таблице status_send_dm есть запись со статусом E, повторяем запрос 5 раз, после этого создаем инцидент.
+
+Таблица status_send_dm
+status_send_dm
+
+Таблица статусов запросов из DataMarket
+
+id	Идентификатор записи	PK	Y	b922ff95-0de1-4a2e-98b0-170a89d0bd72	minLength: 36, maxLength: 36, format: uuid	Генерируется
+request_id	Идентификатор запроса в DataMarket	
+Y	6970f624-8b52-42cb-a651-4ed12109a074	minLength: 36, maxLength: 36, format: uuid	В ответе метода POST /v1​/dataset
+calc_block_id	Идентификатор записи в таблице calc_block	
+Y	5570f624-8b52-42cb-a651-4ed12109a182	minLength: 36, maxLength: 36, format: uuid	calc_block.id
+emp_py_nob_id	Идентификатор записи в таблице employee_py_nob	
+N	f570f624-8b52-42cb-a651-4ed12109a484	minLength: 36, maxLength: 36, format: uuid	employee_py_nob.id
+status	Статус запроса данных в DataMarket	
+Y	E(error), P(processing), S(success)	format: enum	
+description	Описание ошибки или ответа	
+ N	ошибка запроса	format: VARCHAR(255)	В ответе метода POST /v1​/dataset, если в ответе ошибка (description)
+Запрос данных
+Метод: POST /v1​/dataset
+
+Входные данные:
+
+datasetId	string	Название датасета	defaultReportsTaxPayTypeNob
+parameters.payTypes	
+array
+
+string
+
+Виды оплат для отчетности по НОБ 
+
+SELECT distinct py_base, py_tax FROM orgcalc_tax_setting
+
+полученные  py_base и py_tax вставляем в массив pay_types, в тело запроса.
+
+parameters.seqnr	int	Версия расчета	calc_block.seqnr
+parameters.dateChanged	datetime	Дата обновления расчета	calc_block.date_changed
+parameters.splitAdditionalType	string	Фильтр для таблицы сплитов аналитики	ACCRUAL_DATE
+parameters.doIds	
+array
+
+uuid
+
+Идентификатор ДО	
+SELECT DISTINCT do_id FROM calc_block
+
+WHERE seqnr = '...' AND date_changed = '...'
+
+По связке date_changed и seqnr из таблицы calc_block, выбираем do_id со статусом N
+
+properties.packageSize	
+int
+
+объем одного сообщения в байтах, который будет отправлен в kafka
+
+(если не указать будет = 1МБ)
+
+Мерить на НТ
+
+
+ Expand source
+
+
+Выходные данные:
+
+requestId	uuid	Идентификатор запроса в DataMarket	status_send_dm.request_id
+httpStatus	int	Статус ответа	
+description	string	Описание	status_send_dm.description
+errors	
+array
+
+object
+
+Массив с ошибками (по умолчанию пустой)	
+ Expand source
+
+
+Получение данных НОБ в kafka
+Топик: hrp.app.payrolldatamarket.dataset.reportstax
+
+Важно, в Kafka Datamarket отправляет данные по Round Robin (в разные партиции), чтобы дать возможность потребителям ускорить прием данных. Иными словами - DataMarket не гарантириует порядок приёма сообщений в Kafka. Для порядка сообщений есть вспомогательные поля в теле сообщения.  
+
+Тело события: 
+Параметр	Тип	Описание	Куда сохранять
+Параметр	Тип	Описание	Куда сохранять
+requestId	
+uuid	ИД запроса	
+packetId	
+uuid	ИД пакета данных	
+datasetId	
+string	Имя датасета	
+resultSet	
+
+
+
+
+keys_header_id	uuid	Идентификатор заголовка расчета	
+
+do_id	uuid	Идентификатор ДО	employee_py_nob.do_id
+
+seqnr	int	Версия расчета	
+
+calculation_id	uuid	ИД расчета	employee_py_nob.calculation_id
+
+datefor	array	Период для расчета	employee_py_nob.py_nob_date сохраняем в тип date
+
+date_changed	datetime	Дата обновления расчета	
+
+pay_type	string	Вид оплаты	
+Алгоритм обработки
+
+
+amount	int	Сумма	
+employee_py_nob.py_base_amount
+
+employee_py_nob.py_tax_amount
+
+
+rate	int	Ставка	employee_py_nob.tax_rate
+
+split_additional_type	string	Сплит аналитики	
+
+split_value	date	Значение сплита (дата выплаты)	
+size	
+int	Размер пакета	
+page	
+int	Часть пакета	
+
+Алгоритм обработки ответа
+Заполнение таблицы employee_py_nob
+
+Алгоритм обработки
+Шаг 1: Получение и проверка сообщения
+
+Извлекаем данные из полученного сообщения (requestId).
+Шаг 2: Проверка наличия записи в таблице send_status_dm
+
+Выполняем проверку существования записи с данным requestId в таблице send_status_dm.
+Если запись найдена и её статус равен (find first) "P" — переходим к обработке, иначе пропускаем событие.
+Шаг 3: Сохранение видов оплаты
+
+Для каждого объекта из массива resultSet извлекаем значение поля pay_type. По этому полю определяем тип вида оплаты (налоговая база или налог исчисленный = py_base или py_tax) согласно настройкам из таблицы orgcalc_tax_setting.
+По orgcalc_tax_setting.tax_num получаем тип налоговой базы из таблицы base_type.ms_base_type (GENERAL, BENEFITS, INVEST) 
+Шаг 4: Обработка суммы выплат
+
+Считаем общую сумму по каждому типу налоговой базы, ставке и дате НОБ отдельно:
+Сумма всех выплат по py_base сохраняется в поле employee_py_nob.py_base_amount в разрезе ставки (tax_rate) и даты НОБ (datefor).
+Сумма всех удержаний py_tax сохраняется в поле employee_py_nob.py_tax_amount в разрезе ставки (tax_rate) и даты НОБ (datefor).
+Шаг 5: Добавление записей в employee_py_nob
+
+Полученные суммы сохраняем в таблице employee_py_nob по связке do_id, ms_base_type, tax_rate и datefor.
+Если по одному do_id будут разные ставки (например 13 и 15), сохраняем в разные строки.
+Если по одному do_id будут разные типы баз (ms_base_type), сохраняем в разные строки.
+Если по одному do_id будут разные даты НОБ (datefor), сохраняем в разные строки.
+
+
+id	Идентификатор записи	uuid	Y	ПК	f9f778d0-c9c4-4b8a-9dab-09c333cbf898	Генерируется системой
+calculation_id	Идентификатор расчета	uuid	Y	
+24844	из кафки resultSet.calculation_id
+do_id	Идентификатор сотрудника	uuid	Y	
+87163f70-84f9-4383-8738-76fb0a859971	из кафки resultSet.do_id
+epk_id	ЕПК (Единый профиль клиента)	int(8)	N	ВК 	1815551541587794	По do_id ищем person_id в таблице do_person_relation, по полученному person_id получаем epk_id из таблицы epk_person_relation, сверяем start_date и end_date с текущей датой, если текущая дата попадает в период - заполняем. (первый епк попадающий под условия)
+operation_id	Идентификатор операции	varchar(30)	N	
+20250331{XO{S3rL7jouiCvO}k{VBV	состоит из даты операции(date_changed).
+остаток генерируется рандомно до необходимого кол-ва знаков(30)
+send_status	Статус отправки	enum*	Y	
+R	При сохранении ставим статус R - готов к отправке.
+ms_base_type	Тип налоговой базы в МС	varchar (10)	Y	ВК	GENERAL	Алгоритм обработки
+kpp	Код КПП	varchar (9)	Y	
+773601001	На данный момент заполняем 111111111. После доработок на стороне Организатора расчета будет проводится доработка датасета
+oktmo	Код ОКТМО	varchar (11)	Y	
+45397000000	На данный момент заполняем 11111111123. После доработок на стороне Организатора расчета будет проводится доработка датасета
+tax_rate	Процентная ставка	numeric(6, 2)	Y	
+13,00	Алгоритм обработки
+py_nob_date	Дата НОБ	date	Y	
+31.03.2025	resultSet.datefor
+py_base_amount	Сумма базы	numeric(15, 2)	Y	
+100 000,00	Алгоритм обработки
+py_tax_amount	Сумма налога (исчисленного)	numeric(15, 2)	Y	
+13 000,00	Алгоритм обработки
+updated_at	Дата изменения	timestamp	N	
+2024-12-23 12:05:18.373	
+created_at	Дата создания	timestamp	Y	
+2024-12-23 12:05:18.373	
