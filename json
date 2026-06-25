@@ -1,0 +1,493 @@
+{
+    "requestId": "9abbc670-9b12-4ce1-91cc-05983e249be4",
+    "packetId": "d07986b7-c061-47aa-b3d1-4abc107e5926",
+    "datasetId": "defaultReportsTaxPayTypeNob",
+    "resultSet": [
+        {
+            "keys_header_id": "2d55a7c5-24d9-4841-8f46-5ca422a9f66b",
+            "split_additional_type": "ACCRUAL_DATE",
+            "amount": 40212,
+            "rate": 13,
+            "seqnr": 4,
+            "do_id": "da8aeb88-eb5e-46a7-9c72-938852e798ac",
+            "pay_type": "BN310",
+            "datefor": [
+                2025,
+                11,
+                1
+            ],
+            "date_changed": "2025-12-01T09:40:08.587250681",
+            "calculation_id": "1d5b7c0d-cabf-44ae-8945-3818248af1f0",
+            "split_value": "2025-11-30"
+        },
+        {
+            "keys_header_id": "2d55a7c5-24d9-4841-8f46-5ca422a9f66b",
+            "split_additional_type": "ACCRUAL_DATE",
+            "amount": 309324.59,
+            "rate": 13,
+            "seqnr": 4,
+            "do_id": "da8aeb88-eb5e-46a7-9c72-938852e798ac",
+            "pay_type": "BN210",
+            "datefor": [
+                2025,
+                11,
+                1
+            ],
+            "date_changed": "2025-12-01T09:40:08.587250681",
+            "calculation_id": "1d5b7c0d-cabf-44ae-8945-3818248af1f0",
+            "split_value": "2025-11-30"
+        }
+    ],
+    "size": 1,
+    "page": 1
+}
+В случае ошибки, когда были переданы параметры не того формата или другие кейсы в топик прилетит ошибка такого вида:
+
+ Collapse source
+{
+    "operation": "ERROR",
+    "requestId": "6970f624-8b52-42cb-a651-4ed12109a074",
+    "message": ">> Ошибка в процессе обработки датасета defaultReportsAnalyticReportData",
+    "error": {
+        "errorMessage": "Отсутствуют обязательные параметры для датасета ",
+        "errorName": "ru.sberbank.hrp.app.payroll_data_market.exceptions.DatasetProcessingException"
+    }
+}
+Параметр errorMessage сохраняем в status_send_dm.description. Меняем status на E.
+
+{
+  "requestId": "6970f624-8b52-42cb-a651-4ed12109a074",
+  "httpStatus": 200,
+  "description": "Запрос сформирован и обработан успешно",
+  "errors": []
+}
+
+{
+    "datasetId": "defaultReportsTaxPayTypeNob",
+    "parameters": {
+        "payTypes": ["BN260","BN210","BN200","BN220","BN250","BN300","BN310","BN320","BN350","BN360"],
+        "seqnr": 4,
+        "dateChanged": "2025-12-01T09:40:08.587250681",
+        "splitAdditionalType": "ACCRUAL_DATE",
+        "doIds": ["da8aeb88-eb5e-46a7-9c72-938852e798ac"]
+    },
+    "properties": {
+        "packageSize": 1048576
+        }
+}
+
+{
+    "runId": "123466",
+    "runData": [
+        {
+            "calcHeaderId": "b922ff95-0de1-4a2e-98b0-170a89d0bd72",
+            "doIds": [
+                "b922ff95-0de1-4a2e-98b0-170a89d0bd72",
+                "c922ff95-0de1-4a2e-98b0-170a89d0bd73"
+            ]
+        }
+    ],
+    "package": 1,
+    "size": 10
+}
+
+{
+  "runId": 100500,
+  "calculations": [
+    {
+      "calcHeaderId": "b922ff95-0de1-4a2e-98b0-170a89d0bd72",
+      "companyId": "PAOSberbank",
+      "personId": "a322ff95-0de1-4a2e-98b0-170a89d0bd72",
+      "doIds": [
+        "b922ff95-0de1-4a2e-98b0-170a89d0bd72",
+        "x922ff95-0de1-4a2e-98b0-170a89d0bd99"
+       ]
+    }
+  ],
+  "package": 100,
+  "size": 100
+}
+
+{
+    "datasetId": "defaultReportsTaxPayTypeNob",
+    "parameters": {
+        "payTypes": ["BN260","BN210","BN200","BN220","BN250","BN300","BN310","BN320","BN350","BN360"],
+        "seqnr": 4,
+        "dateChanged": "2025-12-01T09:40:08.587250681",
+        "splitAdditionalType": "ACCRUAL_DATE",
+        "doIds": ["da8aeb88-eb5e-46a7-9c72-938852e798ac"]
+    },
+    "properties": {
+        "packageSize": 1048576
+        }
+}
+
+{
+    "datasetId": "defaultReportsTaxPayTypeNob",
+    "parameters": {
+        "payTypes": ["BN260","BN210","BN200","BN220","BN250","BN300","BN310","BN320","BN350","BN360"],
+        "calcHeaderId": "5ae88a52-96be-4313-8b64-19439b7a2080",
+        "splitAdditionalType": "ACCRUAL_DATE",
+        "doIds": ["da8aeb88-eb5e-46a7-9c72-938852e798ac"]
+    },
+    "properties": {
+        "packageSize": 1048576
+        }
+}
+
+2.2.1. Топик KAFKA для отправки НОБ
+Система осуществляет проверку статусов каждые 5 минут.
+Если в таблице employee_py_nob появилась строка где send_status = R
+То Система должна отправить данные в МС.
+
+После отправки данных, статус изменяется на P - processing
+
+После получение данных в ответном топике - S - success
+
+Название топика для отправки НОБ:
+
+SRC.MSNDFL.OPERATIONS_PULS.V1
+
+Топик для получения сообщений не прошедших валидацию на стороне SEDR: 
+
+MSNDFL.OPERATIONS_PULS-DLQ.V1
+
+Событие:
+
+Алгоритм формирования сообщения: 
+
+JOIN с таблицей epk_person_relation.snils для получения СНИЛС
+Фильтруем по статусу
+Группируем по epk_id
+В разрезе epk_id группируем по operation_id
+Раскладываем по объектам rate base tax
+Таблица с маппингом
+{
+    "rq_uuid": "string",
+    "rq_date_time": "2021-07-08T16:59:11.089",
+    "system_code" : "HR",
+    "base_type": "GENERAL",
+    "year": 2022,
+    "operations": [
+        {
+            "epk_id": 1,
+            "epk_operations": [
+               {
+                "system_client_id": "652326",
+                "external_id":"о1",
+                "operation_date_time": "2021-07-08T16:59:11.089",
+                "kpp": "string",
+                "oktmo": "string",
+                "base_tax" : [
+                    {
+                     "rate": 13,
+                     "base": 1000.89,
+                     "tax": 130
+                    },
+                    {
+                     "rate": 15,
+                     "base": 5557.89,
+                     "tax": 834
+                    }
+                ]
+               }
+            ]
+        },
+        {
+            "epk_id": 2,
+            "epk_operations": [
+               {
+                "system_client_id": "6522226",
+                "external_id":"о2",
+                "operation_date_time": "2021-07-08T16:59:11.089",
+                "kpp": "string",
+                "oktmo": "string",
+                "base_tax" : [
+                    {
+                     "rate": 13,
+                     "base": 1000.89,
+                     "tax": 130
+                    }
+                ]
+               }
+            ]
+        }
+    ]
+}
+
+JSON SHEMA Collapse source
+{
+  "$schema": "http://json-schema.org/draft-04/schema#",
+  "title": "template",
+  "type": "object",
+  "properties": {
+    "rq_uuid": {
+      "type": "string",
+      "maxLength": 255
+    },
+    "rq_date_time": {
+      "type": "string",
+      "maxLength": 255
+    },
+    "system_code": {
+      "type": "string",
+      "maxLength": 255
+    },
+    "base_type": {
+      "type": "string",
+      "maxLength": 255
+    },
+    "year": {
+      "type": "number",
+      "minimum": 1990,
+      "maximum": 2100
+    },
+    "operations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "epk_id": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 9999999999999999999
+          },
+          "epk_id_string": {
+            "type": "string",
+            "maxLength": 255
+          },
+          "epk_operations": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "system_client_id": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 9999999999999999999
+                  },
+                "external_id": {
+                  "type": "string",
+                  "maxLength": 255
+                },
+                "operation_date_time": {
+                  "type": "string",
+                  "maxLength": 255
+                },
+                "kpp": {
+                  "type": "string",
+                  "maxLength": 255
+                },
+                "oktmo": {
+                  "type": "string",
+                  "maxLength": 255
+                },
+                "base_tax": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "rate": {
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 50
+                      },
+                      "base": {
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 9999999999999999999
+                       },
+                      "tax": {
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 9999999999999999999
+                       }
+                    },
+                    "additionalProperties": false
+                  },
+                  "maxItems": 1000,
+                  "uniqueItems": true,
+                  "additionalItems": false
+                }
+              },
+              "additionalProperties": false
+            },
+            "maxItems": 1000,
+            "uniqueItems": true,
+            "additionalItems": false
+          }
+        },
+        "additionalProperties": false
+      },
+      "maxItems": 1000,
+      "uniqueItems": true,
+      "additionalItems": false
+    }
+  },
+  "additionalProperties": false
+}
+
+{
+    "rq_uuid": "string",
+    "status_code": 0,
+    "sums": [
+        {
+            "epk_id": 1,
+            "epk_operations" : [
+               {
+                    "system_client_id": "652326ыаымыыкп",
+                    "external_id":"о1",
+                    "status_code":0,
+                    "kpp": "string",
+                    "oktmo": "string",
+                    "base_tax" : [
+                        {
+                         "rate": 13,
+                         "base": 1000.89,
+                         "tax": 130
+                        },
+                        {
+                         "rate": 15,
+                         "base": 5557.89,
+                         "tax": 834
+                        }
+                    ]
+               }
+            ]
+        }
+    ]
+}
+
+{
+  "$schema": "http://json-schema.org/draft-04/schema#",
+  "type": "object",
+  "properties": {
+    "rq_uuid": {
+      "type": "string",
+      "maxLength": 255
+    },
+    "status_code": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 100
+    },
+    "error_message": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 1024
+    },
+    "sums": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "epk_id": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100000000000000000000
+          },
+          "epk_operations": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "system_client_id": {
+                  "type": "string",
+                  "maxLength": 100
+                },
+                "external_id": {
+                  "type": "string",
+                  "maxLength": 100
+                },
+                "status_code": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 599
+                },
+                "error_message": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "maxLength": 1024
+                },
+                "kpp": {
+                  "type": "string",
+                  "maxLength": 20
+                },
+                "oktmo": {
+                  "type": "string",
+                  "maxLength": 20
+                },
+                "note": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "maxLength": 2048
+                },
+                "base_tax": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "rate": {
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 100
+                      },
+                      "base": {
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 100000000000000000000
+                      },
+                      "tax": {
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 100000000000000000000
+                      }
+                    },
+                    "required": [
+                      "rate",
+                      "base",
+                      "tax"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "maxItems": 1000,
+                  "uniqueItems": true,
+                  "additionalItems": false
+                }
+              },
+              "required": [
+                "system_client_id",
+                "external_id",
+                "status_code"
+              ],
+              "additionalProperties": false
+            },
+            "maxItems": 1000,
+            "uniqueItems": true,
+            "additionalItems": false
+          }
+        },
+        "required": [
+          "epk_id",
+          "epk_operations"
+        ],
+        "additionalProperties": false
+      },
+      "maxItems": 1000,
+      "uniqueItems": true,
+      "additionalItems": false
+    }
+  },
+  "required": [
+    "rq_uuid",
+    "status_code",
+    "sums"
+  ],
+  "additionalProperties": false
+}
