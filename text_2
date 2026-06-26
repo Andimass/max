@@ -1,6 +1,232 @@
-Что сделать
+Описать политику доступа пользователя к сервису по инструкции: 
+Для добавления нового сервиса необходимо описать политику доступа пользователя к сервису по:
+ролям
+окружению, из которого производится работа с платформой
+организации, к которой относится пользователь
 
-Источник значения: брать system_client_id из employee_py_nob.do_id (значение уже в строке). Удалить шаг получения СНИЛС через JOIN с epk_person_relation.snils.
-Схема запроса: system_client_id тип number → string, maxLength 255 (провалидированная схема — в спеке, раздел 4).
-Схема ответа (DST.MSNDFL.OPERATIONS_TO_PULS.V1) — не трогать, поле уже string; обработка ответа на это поле не завязана (сверка по epk_id).
-Группировку не менять: строки employee_py_nob с одним epk_id и разными do_id уходят отдельными элементами epk_operations, в каждом свой do_id.
+В  <Policy xmlns="urn:oasis:names:tc:xacml:3.0:core:schema:wd-17" PolicyId="urn:sberbank:names:hrp-launchpad:xacml:policy:flow:analytics" RuleCombiningAlgId="urn:oasis:names:tc:xacml:1.0:rule-combining-algorithm:deny-overrides" Version="1.0">
+           В политиках необходимо использовать комбинирующий алгоритм (менять не рекомендуется). 
+           Указывается PolicyId - urn:sberbank:names:hrp-launchpad:xacml:policy:flow:КОДСЕРВИСА
+
+          КОДСЕРВИСА берется из столбца code таблицы Реестр сервисов. Если сервис еще не добавлен в реестр, то необходимо обратиться к Unknown User (18514551)или Лобкова Наталья Сергеевна
+
+
+
+
+В <Target> указывается список компаний, которые имеют доступ к плитке, например для PAOSberbank, AOSBT:
+
+<AllOf>
+    <Match MatchId="urn:oasis:names:tc:xacml:1.0:function:string-equal">
+        <AttributeValue DataType="http://www.w3.org/2001/XMLSchema#string">PAOSberbank</AttributeValue>
+        <AttributeDesignator Category="urn:oasis:names:tc:xacml:1.0:subject-category:access-subject"
+                             AttributeId="urn:sberbank:names:hrp-authn:xacml:subject:company-id"
+                             DataType="http://www.w3.org/2001/XMLSchema#string"
+                             MustBePresent="false"/>
+    </Match>
+</AllOf>
+<AllOf>
+    <Match MatchId="urn:oasis:names:tc:xacml:1.0:function:string-equal">
+        <AttributeValue DataType="http://www.w3.org/2001/XMLSchema#string">AOSBT</AttributeValue>
+        <AttributeDesignator Category="urn:oasis:names:tc:xacml:1.0:subject-category:access-subject"
+                             AttributeId="urn:sberbank:names:hrp-authn:xacml:subject:company-id"
+                             DataType="http://www.w3.org/2001/XMLSchema#string"
+                             MustBePresent="false"/>
+    </Match>
+</AllOf>
+В <VariableDefinition VariableId="is-allowed-by-group"> указываются группы, в которых должен состоять пользователь, чтобы иметь доступ к сервису. Если роли находятся относятся к разным реалмам, то нужно создавать отдельные блоки <Apply FunctionId="urn:sberbank:names:hrp-authz:xacml:function:is-in-dyn-group"> под каждый из реалмов. Но если все группы относятся к одному реалму, тогда блок <Apply FunctionId="urn:sberbank:names:hrp-authz:xacml:function:is-in-dyn-group"> будет один, будет несколько <AttributeValue> для каждой из групп. Отношение групп и реалмов описаны тут - "Роли" и авторизационные группы
+
+<VariableDefinition VariableId="is-allowed-by-group">
+        <Apply FunctionId="urn:oasis:names:tc:xacml:1.0:function:or">
+            <Apply FunctionId="urn:sberbank:names:hrp-authz:xacml:function:is-in-dyn-group">
+                <Apply FunctionId="urn:oasis:names:tc:xacml:1.0:function:integer-one-and-only">
+                    <AttributeDesignator Category="urn:oasis:names:tc:xacml:1.0:subject-category:access-subject"
+                                         AttributeId="urn:oasis:names:tc:xacml:1.0:subject:subject-id"
+                                         DataType="http://www.w3.org/2001/XMLSchema#integer"
+                                         MustBePresent="true"/>
+                </Apply>
+                <Apply FunctionId="urn:oasis:names:tc:xacml:1.0:function:string-bag">
+                    <AttributeValue DataType="http://www.w3.org/2001/XMLSchema#string">ГРУППА1</AttributeValue>
+                    <AttributeValue DataType="http://www.w3.org/2001/XMLSchema#string">ГРУППА2</AttributeValue>
+                </Apply>
+                <AttributeValue DataType="http://www.w3.org/2001/XMLSchema#string">РЕАЛМ1</AttributeValue>
+            </Apply>
+ 
+            <Apply FunctionId="urn:sberbank:names:hrp-authz:xacml:function:is-in-dyn-group">
+                <Apply FunctionId="urn:oasis:names:tc:xacml:1.0:function:integer-one-and-only">
+                    <AttributeDesignator Category="urn:oasis:names:tc:xacml:1.0:subject-category:access-subject"
+                                         AttributeId="urn:oasis:names:tc:xacml:1.0:subject:subject-id"
+                                         DataType="http://www.w3.org/2001/XMLSchema#integer"
+                                         MustBePresent="true"/>
+                </Apply>
+                <Apply FunctionId="urn:oasis:names:tc:xacml:1.0:function:string-bag">
+                    <AttributeValue DataType="http://www.w3.org/2001/XMLSchema#string">ГРУППА3</AttributeValue>
+                </Apply>
+                <AttributeValue DataType="http://www.w3.org/2001/XMLSchema#string">РЕАЛМ2</AttributeValue>
+            </Apply>
+        </Apply>
+    </VariableDefinition>
+В блоке <Rule RuleId="permit-flow-КОДСЕРВИСА" Effect="Permit"> указывается код сервиса 
+В блоке AdviceExpressions указывается КОДСЕРВИСА в AttributeValue
+
+<AdviceExpressions>
+            <AdviceExpression AdviceId="showFlow" AppliesTo="Permit">
+                <AttributeAssignmentExpression AttributeId="urn:sberbank:names:hrp-launchpad:xacml:data:flow-id">
+                    <AttributeValue DataType="http://www.w3.org/2001/XMLSchema#string">КОДСЕРВИСА</AttributeValue>
+В случае, если сервис должен быть доступен, например только из VPN (citrix, emm и прочее), то добавляется ещё один блок  <Rule RuleId="deny-flow-КОДСЕРВИСА-vpn" Effect="Permit"> внутри которого, необходимо описать  <ObligationExpressions>
+с атрибутом AttributeValue:
+<AttributeValue DataType="urn:sberbank:names:xacml:data-type:json"> {
+  "code": "КОДСЕРВИСА",
+  "decision": "disable",
+  "reason": "NOT_VPN"
+  }
+</AttributeValue>
+
+Код для поля reason заполняется одним из значений таблицы: Ограничение доступа в Пульс. Общие положения и реализация в сервисах
+Если ограничений на сервис более одной штуки, то создается отдельный блок <Rule RuleId="deny-flow-КОДСЕРВИСА-vpn" Effect="Permit"> для каждого из ограничений
+
+Политику необходимо отладить на стенде DEV. Процесс обновления политик с использованием ConfigManager описан на странице сервиса Авторизации: 
+Процесс изменения политик и сущностей авторизации с использованием интеграции с ConfigManager
+
+
+Пример заполнения политики:
+<Policy xmlns="urn:oasis:names:tc:xacml:3.0:core:schema:wd-17" PolicyId="urn:sberbank:names:hrp-launchpad:xacml:policy:flow:КОДСЕРВИСА" RuleCombiningAlgId="urn:oasis:names:tc:xacml:1.0:rule-combining-algorithm:deny-overrides" Version="1.0">
+<Description>Все сотрудники тенанта Сбербанк, работающие в компаниях: ПАО Сбербанк, АО Сбербанк технологии, АНО Корпоративный университет Сбербанка, АО Сбербанк КИБ, АО Сбербанк Лизинг, ООО Сбербанк Инвестиции могут видеть плитки сервиса Аналитика.</Description>
+<Target>
+<AnyOf>
+<AllOf>
+<Match MatchId="urn:oasis:names:tc:xacml:1.0:function:string-equal">
+<AttributeValue DataType="http://www.w3.org/2001/XMLSchema#string">PAOSberbank</AttributeValue>
+<AttributeDesignator Category="urn:oasis:names:tc:xacml:1.0:subject-category:access-subject" AttributeId="urn:sberbank:names:hrp-authn:xacml:subject:company-id" DataType="http://www.w3.org/2001/XMLSchema#string" MustBePresent="false"/>
+</Match>
+</AllOf>
+<AllOf>
+<Match MatchId="urn:oasis:names:tc:xacml:1.0:function:string-equal">
+<AttributeValue DataType="http://www.w3.org/2001/XMLSchema#string">AOSBT</AttributeValue>
+<AttributeDesignator Category="urn:oasis:names:tc:xacml:1.0:subject-category:access-subject" AttributeId="urn:sberbank:names:hrp-authn:xacml:subject:company-id" DataType="http://www.w3.org/2001/XMLSchema#string" MustBePresent="false"/>
+</Match>
+</AllOf>
+<AllOf>
+<Match MatchId="urn:oasis:names:tc:xacml:1.0:function:string-equal">
+<AttributeValue DataType="http://www.w3.org/2001/XMLSchema#string">ANOSCU</AttributeValue>
+<AttributeDesignator Category="urn:oasis:names:tc:xacml:1.0:subject-category:access-subject" AttributeId="urn:sberbank:names:hrp-authn:xacml:subject:company-id" DataType="http://www.w3.org/2001/XMLSchema#string" MustBePresent="false"/>
+</Match>
+</AllOf>
+<AllOf>
+<Match MatchId="urn:oasis:names:tc:xacml:1.0:function:string-equal">
+<AttributeValue DataType="http://www.w3.org/2001/XMLSchema#string">AOSCIB</AttributeValue>
+<AttributeDesignator Category="urn:oasis:names:tc:xacml:1.0:subject-category:access-subject" AttributeId="urn:sberbank:names:hrp-authn:xacml:subject:company-id" DataType="http://www.w3.org/2001/XMLSchema#string" MustBePresent="false"/>
+</Match>
+</AllOf>
+<AllOf>
+<Match MatchId="urn:oasis:names:tc:xacml:1.0:function:string-equal">
+<AttributeValue DataType="http://www.w3.org/2001/XMLSchema#string">AOSL</AttributeValue>
+<AttributeDesignator Category="urn:oasis:names:tc:xacml:1.0:subject-category:access-subject" AttributeId="urn:sberbank:names:hrp-authn:xacml:subject:company-id" DataType="http://www.w3.org/2001/XMLSchema#string" MustBePresent="false"/>
+</Match>
+</AllOf>
+<AllOf>
+<Match MatchId="urn:oasis:names:tc:xacml:1.0:function:string-equal">
+<AttributeValue DataType="http://www.w3.org/2001/XMLSchema#string">OOOSI</AttributeValue>
+<AttributeDesignator Category="urn:oasis:names:tc:xacml:1.0:subject-category:access-subject" AttributeId="urn:sberbank:names:hrp-authn:xacml:subject:company-id" DataType="http://www.w3.org/2001/XMLSchema#string" MustBePresent="false"/>
+</Match>
+</AllOf>
+</AnyOf>
+<AnyOf>
+<AllOf>
+<Match MatchId="urn:oasis:names:tc:xacml:1.0:function:string-equal">
+<AttributeValue DataType="http://www.w3.org/2001/XMLSchema#string">Sberbank</AttributeValue>
+<AttributeDesignator Category="urn:oasis:names:tc:xacml:1.0:subject-category:access-subject" AttributeId="urn:sberbank:names:hrp-authn:xacml:subject:tenant-id" DataType="http://www.w3.org/2001/XMLSchema#string" MustBePresent="true"/>
+</Match>
+<Match MatchId="urn:oasis:names:tc:xacml:1.0:function:boolean-equal">
+<AttributeValue DataType="http://www.w3.org/2001/XMLSchema#boolean">true</AttributeValue>
+<AttributeDesignator Category="urn:oasis:names:tc:xacml:1.0:subject-category:access-subject" AttributeId="urn:sberbank:names:hrp-authn:xacml:subject:is-employed" DataType="http://www.w3.org/2001/XMLSchema#boolean" MustBePresent="false"/>
+</Match>
+<Match MatchId="urn:oasis:names:tc:xacml:1.0:function:string-equal">
+<AttributeValue DataType="http://www.w3.org/2001/XMLSchema#string">urn:sberbank:names:hrp-launchpad:xacml:action:get-flows</AttributeValue>
+<AttributeDesignator Category="urn:oasis:names:tc:xacml:3.0:attribute-category:action" AttributeId="urn:oasis:names:tc:xacml:1.0:action:action-id" DataType="http://www.w3.org/2001/XMLSchema#string" MustBePresent="false"/>
+</Match>
+</AllOf>
+</AnyOf>
+</Target>
+<VariableDefinition VariableId="is-allowed-by-group">
+<Apply FunctionId="urn:oasis:names:tc:xacml:1.0:function:or">
+<Apply FunctionId="urn:sberbank:names:hrp-authz:xacml:function:is-in-dyn-group">
+<Apply FunctionId="urn:oasis:names:tc:xacml:1.0:function:integer-one-and-only">
+<AttributeDesignator Category="urn:oasis:names:tc:xacml:1.0:subject-category:access-subject" AttributeId="urn:oasis:names:tc:xacml:1.0:subject:subject-id" DataType="http://www.w3.org/2001/XMLSchema#integer" MustBePresent="true"/>
+</Apply>
+<Apply FunctionId="urn:oasis:names:tc:xacml:1.0:function:string-bag">
+<AttributeValue DataType="http://www.w3.org/2001/XMLSchema#string">HRP_MANAGER</AttributeValue>
+<AttributeValue DataType="http://www.w3.org/2001/XMLSchema#string">HRP_AGILE_MANAGER</AttributeValue>
+</Apply>
+<AttributeValue DataType="http://www.w3.org/2001/XMLSchema#string">HRPCommon</AttributeValue>
+</Apply>
+<Apply FunctionId="urn:sberbank:names:hrp-authz:xacml:function:is-in-dyn-group">
+<Apply FunctionId="urn:oasis:names:tc:xacml:1.0:function:integer-one-and-only">
+<AttributeDesignator Category="urn:oasis:names:tc:xacml:1.0:subject-category:access-subject" AttributeId="urn:oasis:names:tc:xacml:1.0:subject:subject-id" DataType="http://www.w3.org/2001/XMLSchema#integer" MustBePresent="true"/>
+</Apply>
+<Apply FunctionId="urn:oasis:names:tc:xacml:1.0:function:string-bag">
+<AttributeValue DataType="http://www.w3.org/2001/XMLSchema#string">HRBP</AttributeValue>
+</Apply>
+<AttributeValue DataType="http://www.w3.org/2001/XMLSchema#string">HRPSmartProfile</AttributeValue>
+</Apply>
+</Apply>
+</VariableDefinition>
+<Rule RuleId="permit-flow-КОДСЕРВИСА" Effect="Permit">
+<Description>Разрешить доступ к плитке в случае наличия групп</Description>
+<Condition>
+<VariableReference VariableId="is-allowed-by-group"/>
+</Condition>
+<AdviceExpressions>
+<AdviceExpression AdviceId="showFlow" AppliesTo="Permit">
+<AttributeAssignmentExpression AttributeId="urn:sberbank:names:hrp-launchpad:xacml:data:flow-id">
+<AttributeValue DataType="http://www.w3.org/2001/XMLSchema#string">КОДСЕРВИСА</AttributeValue>
+</AttributeAssignmentExpression>
+</AdviceExpression>
+</AdviceExpressions>
+</Rule>
+<Rule RuleId="deny-flow-КОДСЕРВИСА-vpn" Effect="Permit">
+<Description>Запретить если без использования vpn</Description>
+<Condition>
+<Apply FunctionId="urn:oasis:names:tc:xacml:1.0:function:and">
+<VariableReference VariableId="is-allowed-by-group"/>
+<Apply FunctionId="urn:oasis:names:tc:xacml:1.0:function:not">
+<Apply FunctionId="urn:oasis:names:tc:xacml:1.0:function:boolean-is-in">
+<AttributeValue DataType="http://www.w3.org/2001/XMLSchema#boolean">true</AttributeValue>
+<AttributeDesignator Category="urn:oasis:names:tc:xacml:1.0:subject-category:requesting-machine" AttributeId="urn:sberbank:names:hrp-authn:xacml:requesting-machine:is-vpn" DataType="http://www.w3.org/2001/XMLSchema#boolean" MustBePresent="false"/>
+</Apply>
+</Apply>
+</Apply>
+</Condition>
+<ObligationExpressions>
+<ObligationExpression ObligationId="disableFlow" FulfillOn="Permit">
+<AttributeAssignmentExpression AttributeId="urn:sberbank:names:hrp-launchpad:xacml:data:flows">
+<AttributeValue DataType="urn:sberbank:names:xacml:data-type:json"> { "code": "КОДСЕРВИСА", "decision": "disable", "reason": "NOT_VPN" } </AttributeValue>
+</AttributeAssignmentExpression>
+</ObligationExpression>
+</ObligationExpressions>
+</Rule>
+<Rule RuleId="deny-flow-КОДСЕРВИСА-citrix" Effect="Permit">
+<Description>Запретить если без использования citrix</Description>
+<Condition>
+<Apply FunctionId="urn:oasis:names:tc:xacml:1.0:function:and">
+<VariableReference VariableId="is-allowed-by-group"/>
+<Apply FunctionId="urn:oasis:names:tc:xacml:1.0:function:not">
+<Apply FunctionId="urn:oasis:names:tc:xacml:1.0:function:boolean-is-in">
+<AttributeValue DataType="http://www.w3.org/2001/XMLSchema#boolean">true</AttributeValue>
+<AttributeDesignator Category="urn:oasis:names:tc:xacml:1.0:subject-category:requesting-machine" AttributeId="urn:sberbank:names:hrp-authn:xacml:requesting-machine:is-citrix" DataType="http://www.w3.org/2001/XMLSchema#boolean" MustBePresent="false"/>
+</Apply>
+</Apply>
+</Apply>
+</Condition>
+<ObligationExpressions>
+<ObligationExpression ObligationId="disableFlow" FulfillOn="Permit">
+<AttributeAssignmentExpression AttributeId="urn:sberbank:names:hrp-launchpad:xacml:data:flows">
+<AttributeValue DataType="urn:sberbank:names:xacml:data-type:json"> { "code": "КОДСЕРВИСА", "decision": "disable", "reason": "NOT_CITRIX" } </AttributeValue>
+</AttributeAssignmentExpression>
+</ObligationExpression>
+</ObligationExpressions>
+</Rule>
+</Policy>
+
+
+
+ 
