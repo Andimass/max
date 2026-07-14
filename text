@@ -1,109 +1,309 @@
-4. Триггер и порядок выполнения
+1. Модель данных
+1.1.  Настроечная таблица: validation_check_list
+rnu_setting.validation_check_list — реестр проверок
 
-Триггер: переход отчёта в статус DONE. Применяется ко всем типам отчётов (report_type не учитывается).
+Поле
+
+Тип
+
+Обязательность
+
+Описание
+
+code
+
+varchar(25), PK
+
+X
+
+Код ошибки
+
+name
+
+varchar(255)
+
+X
+
+Текст сообщения
+
+type
+
+enum
+
+
+
+ALGORITHMIC / LOGICAL
+
+block
+
+enum
+
+
+
+INCOME / DEDUCTION / PERSON_DATA
+
+description
+
+text
+
+
+
+Описание алгоритма
+
+is_active
+
+boolean
+
+
+
+Признак включения проверки в прогон
+
+Заполнение настроечной таблицы:
+
+2001	налог исчисл <> база × процент	ALGORITHMIC	INCOME	tax_calculated <> ROUND(base_amount * tax_rate / 100)	X
+2002	
+НОБ > доход
+
+LOGICAL	INCOME	base_amount > income_amount	X
+1.2. Основные таблицы: validation_run, validation_result
+Требуется создать новую схему rnu_audit и подключить к BI Viewer (наравне с main, rnu_report, rnu_setting).
+
+В новой схеме создать следующие таблицы: 
+
+rnu_audit.validation_run — прогон валидации
+
+Поле
+
+Тип
+
+Обязательность
+
+Описание
+
+id
+
+uuid, PK
+
+X
+
+Идентификатор записи
+
+job_id
+
+uuid, FK → `job`
+
+X
+
+Job, по которому выполнен прогон
+
+status
+
+enum
+
+
+
+STARTED / DONE / ERROR
+
+started_at
+
+timestamp
+
+
+
+Время начала прогона
+
+finished_at
+
+timestamp
+
+
+
+Время завершения прогона
+
+deviations_count
+
+int
+
+
+
+Количество выявленных отклонений
+
+error_message
+
+text
+
+
+
+Техническая ошибка прогона (не отклонение данных)
+
+
+
+rnu_audit.validation_result — результаты (отклонения)
+
+Поле
+
+Тип
+
+Обязательность
+
+Описание
+
+id
+
+uuid, PK
+
+X
+
+Идентификатор записи
+
+validation_run_id
+
+uuid, FK → validation_run
+
+X
+
+Прогон
+
+validation_check_list_id
+
+FK → validation_check
+
+
+
+Непройденная проверка (код ошибки — из реестра)
+
+table
+
+enum
+
+
+
+rnu_income / rnu_person_data / rnu_deduction / rnu_advance_payment
+
+table_entry_id
+
+uuid
+
+
+
+Идентификатор записи таблицы, в которой найдена ошибка
+
+person_id
+
+uuid
+
+
+
+Идентификатор физического лица
+
+do_id
+
+uuid
+
+
+
+Идентификатор трудового договора сотрудника
+
+created_at
+
+timestamp
+
+
+
+Дата создания записи
+
+
+
+2. Алгоритмы проверок
+2.1. Соответствие терминов и полей
+Термин
+
+Поле
+
+Тип
+
+доход
+
+rnu_income.income_amount
+
+numeric(15,2)
+
+база / НОБ (налогооблагаемая база)
+
+rnu_income.base_amount
+
+numeric(15,2)
+
+исчисленный налог
+
+rnu_income.tax_calculated
+
+numeric(15,2)
+
+процент (ставка налога)
+
+rnu_income.tax_rate
+
+numeric(6,2)
+
+вычет
+
+SUM(rnu_deduction.amount)` по `income_id
+
+numeric(15,2)
+
+
+
+Проверка 2001 — «исчисл <> база × процент» (алгоритмическая)
+
+Условие отклонения: tax_calculated <> ROUND(base_amount * tax_rate / 100)
+
+tax_rate хранится в процентах (например, 13.00), поэтому требуется деление на 100.
+
+
+Проверка 2002 — «НОБ > доход» (логическая)
+
+Условие отклонения: base_amount > income_amount
+
+
+
+3. Триггер запуска
+Переход отчёта в статус DONE. Применяется ко всем типам отчётов (report_type не учитывается).
 
 Порядок выполнения:
 
+1. Создаётся запись в rnu_audit.validation_run со статусом STARTED.
 
-Создаётся запись в rnu_audit.validation_run со статусом STARTED.
-Из rnu_setting.validation_check выбираются активные проверки (is_active = true).
-Выполняется построчный обход строк дохода в рамках Job:
+2. Из rnu_setting.validation_check_list выбираются активные проверки (is_active = true).
 
+3. Выполняется построчный обход строк дохода в рамках Job:
 
 job (status = DONE)
   └── job_period (job_id)
         └── rnu_income (job_period_id)   ← построчный обход
 
 
-К каждой строке rnu_income применяются все активные проверки.
-При невыполнении проверки создаётся запись в rnu_audit.validation_result.
-По завершении обхода validation_run переводится в статус DONE, заполняется deviations_count.
-При технической ошибке прогона validation_run переводится в статус ERROR, ошибка фиксируется в error_message.
+4. К каждой строке rnu_income применяются все активные проверки.
+5. При невыполнении проверки создаётся запись в rnu_audit.validation_result.
+6. По завершении обхода validation_run переводится в статус DONE, заполняется deviations_count.
+7. При технической ошибке прогона validation_run переводится в статус ERROR, ошибка фиксируется в error_message.
+
 
 
 Правила
 
+- Единица проверки — одна строка rnu_income. Каждая проверка выполняется в границах одной строки, по её собственным полям. Сравнение между разными строками дохода и агрегация по Job / сотруднику / периоду не производятся.
+- В validation_result фиксируются только отклонения. Успешно пройденные проверки не записываются.
+- Одна запись validation_result = одна непройденная проверка на одной строке rnu_income.
+- Доступ от job к rnu_income осуществляется только через промежуточную таблицу job_period.
 
-Единица проверки — одна строка rnu_income. Каждая проверка выполняется в границах одной строки, по её собственным полям. Сравнение между разными строками дохода и агрегация по Job / сотруднику / периоду не производятся.
-В validation_result фиксируются только отклонения. Успешно пройденные проверки не записываются.
-Одна запись validation_result = одна непройденная проверка на одной строке rnu_income.
-Доступ от job к rnu_income осуществляется только через промежуточную таблицу job_period.
-
-
-
-5. Реестр проверок
-
-Все четыре проверки регистрируются в rnu_setting.validation_check. Реализации в рамках MVP подлежат проверки № 2 и № 4.
-
-№Текст сообщенияВидИсточник данныхРеализация1база <> доход − вычетАлгоритмическаяrnu_income, rnu_deductionне в MVP2исчисл <> база × процентАлгоритмическаяrnu_incomeMVP3вычет > доходЛогическаяrnu_income, rnu_deductionне в MVP4НОБ =< доходЛогическаяrnu_incomeMVP
-
-Соответствие терминов и полей
-
-ТерминПолеТипдоходrnu_income.income_amountnumeric(15,2)база / НОБ (налогооблагаемая база)rnu_income.base_amountnumeric(15,2)исчисленный налогrnu_income.tax_calculatednumeric(15,2)процент (ставка налога)rnu_income.tax_ratenumeric(6,2)вычетSUM(rnu_deduction.amount) по income_idnumeric(15,2)
-
-Алгоритмы проверок MVP
-
-Проверка № 2 — «исчисл <> база × процент» (алгоритмическая)
-
-Условие отклонения:
-
-tax_calculated <> ROUND(base_amount * tax_rate / 100)
-
-tax_rate хранится в процентах (например, 13.00), поэтому требуется деление на 100.
-Правило округления — см. п. 7.1.
-
-Проверка № 4 — «НОБ =< доход» (логическая)
-
-Условие отклонения:
-
-base_amount > income_amount
-
-Формулировка в реестре задана как корректное правило (НОБ должна быть меньше либо равна доходу). Отклонением считается его нарушение — см. п. 7.2.
-
-
-6. Модель данных
-
-Структура полей — согласно validation_block_db_full.sql. Минимально необходимый состав для MVP:
-
-6.1 rnu_setting.validation_check — реестр проверок
-
-ПолеТипОписаниеidPKИдентификатор проверкиcodevarchar, UQКод ошибки, отражается в результатеnamevarchar(255)Текст сообщенияtypeenumALGORITHMIC / LOGICALruletextАлгоритм проверки (условие отклонения)entity_blockenumINCOME / DEDUCTION / PERSON_DATAis_activebooleanПризнак включения проверки в прогонcreated_attimestampupdated_attimestamp
-
-6.2 rnu_audit.validation_run — прогон валидации
-
-ПолеТипОписаниеiduuid, PKjob_iduuid, FK → jobJob, по которому выполнен прогонstatusenumSTARTED / DONE / ERRORstarted_attimestampВремя начала прогонаfinished_attimestampВремя завершения прогонаdeviations_countintКоличество выявленных отклоненийerror_messagetextТехническая ошибка прогона (не отклонение данных)
-
-6.3 rnu_audit.validation_result — результаты (отклонения)
-
-ПолеТипОписаниеiduuid, PKrun_iduuid, FK → validation_runПрогонcheck_idFK → rnu_setting.validation_checkНепройденная проверка (код ошибки — из реестра)entity_blockenumINCOME / DEDUCTION / PERSON_DATAentity_iduuidИдентификатор записи (для MVP — rnu_income.id)do_iduuidИдентификатор ДО (из rnu_income.do_id)expected_valuenumeric(15,2)Ожидаемое значениеactual_valuenumeric(15,2)Фактическое значениеcreated_attimestamp
-
-Связка entity_block + entity_id универсальна: последующие проверки затрагивают rnu_deduction и rnu_person_data и должны фиксироваться в той же таблице без изменения структуры.
-
-
-7. Требует подтверждения аналитиком до реализации
-
-7.1 Правило округления в проверке № 2.
-tax_calculated имеет тип numeric(15,2), при этом НДФЛ исчисляется в полных рублях. Строгое сравнение tax_calculated с расчётным значением base_amount × tax_rate / 100 приведёт к массовой фиксации ложных отклонений. Необходимо определить: округление расчётного значения до целых рублей либо допустимое отклонение (например, ±1 руб.).
-
-7.2 Формулировка проверки № 4.
-Проверки № 1–3 в реестре сформулированы как условия отклонения, проверка № 4 — как корректное правило. Требуется единообразие формулировок в поле rule, чтобы исключить инверсию логики при реализации.
-
-7.3 Гранулярность прогона.
-Прогон привязывается к job_id. При наличии нескольких job_period в рамках одного Job уточнить: один прогон на Job либо отдельный прогон на каждый период.
-
-7.4 Объём переиспользования DDL.
-Определить, применяется ли validation_block_db_full.sql без изменений (включая поля маршрутизации и рассылки, не используемые в MVP) либо в сокращённом виде.
-
-
-8. Критерии приёмки
-
-
-Создана схема rnu_audit с таблицами validation_run и validation_result и необходимыми enum-типами.
-В схеме rnu_setting создана таблица-реестр validation_check.
-Схема rnu_audit доступна для просмотра в BI Viewer.
-Реестр rnu_setting.validation_check содержит четыре проверки с кодами, типами и правилами.
-При переходе отчёта в статус DONE автоматически создаётся запись в validation_run.
-Проверки № 2 и № 4 выполняются построчно по всем записям rnu_income в рамках Job.
-Отклонения фиксируются в validation_result с указанием check_id, entity_id, do_id, ожидаемого и фактического значения.
-Записи по успешно пройденным проверкам в validation_result отсутствуют.
-По завершении прогона validation_run содержит корректный deviations_count и статус DONE; при технической ошибке — статус ERROR и описание в error_message.
+4. Критерии приёмки
+1. Создана схема rnu_audit с таблицами validation_run и validation_result с необходимыми enum-типами.
+2. В схеме rnu_setting создана таблица-реестр validation_check_list.
+3. Схема rnu_audit доступна для просмотра в BI Viewer.
+4. Реестр rnu_setting.validation_check_list содержит две проверки с кодами, типами и описанием.
+5. При переходе отчёта в статус DONE автоматически создаётся запись в validation_run.
+6. Проверки выполняются построчно по всем записям rnu_income в рамках Job.
+7. Отклонения фиксируются в validation_result с указанием check_code, entity_id, do_id, ожидаемого и фактического значения.
+8. Записи по успешно пройденным проверкам в validation_result отсутствуют.
+9. По завершении прогона validation_run содержит корректный deviation_count и статус DONE; при технической ошибке — статус ERROR и описание в error_message.
