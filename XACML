@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Policy xmlns="urn:oasis:names:tc:xacml:3.0:core:schema:wd-17"
+        PolicyId="urn:sberbank:names:hrp-admin:xacml:policy:facade:flows:"КОДАДМИНКИ"
+        RuleCombiningAlgId="urn:oasis:names:tc:xacml:1.0:rule-combining-algorithm:deny-overrides" Version="1.0">
+ 
+  <Description>Пользователи с ролями HRP_TSUPPORT, COREUI_ADMIN могут видеть админ плитку "КОДАДМИНКИ"</Description>
+ 
+  <Target>
+    <AnyOf>
+      <AllOf>
+        <Match MatchId="urn:oasis:names:tc:xacml:1.0:function:string-equal">
+          <AttributeValue DataType="http://www.w3.org/2001/XMLSchema#string">urn:sberbank:names:hrp-admin:xacml:action:facade-flows-admin-access</AttributeValue>
+          <AttributeDesignator Category="urn:oasis:names:tc:xacml:3.0:attribute-category:action"
+                               AttributeId="urn:oasis:names:tc:xacml:1.0:action:action-id"
+                               DataType="http://www.w3.org/2001/XMLSchema#string"
+                               MustBePresent="false"/>
+        </Match>
+      </AllOf>
+    </AnyOf>
+  </Target>
+ 
+  <VariableDefinition VariableId="is-allowed-by-group">
+    <Apply FunctionId="urn:oasis:names:tc:xacml:1.0:function:or">
+      <Apply FunctionId="urn:sberbank:names:hrp-authz:xacml:function:is-in-dyn-group">
+        <Apply FunctionId="urn:oasis:names:tc:xacml:1.0:function:integer-one-and-only">
+          <AttributeDesignator Category="urn:oasis:names:tc:xacml:1.0:subject-category:access-subject"
+                               AttributeId="urn:oasis:names:tc:xacml:1.0:subject:subject-id"
+                               DataType="http://www.w3.org/2001/XMLSchema#integer"
+                               MustBePresent="true"/>
+        </Apply>
+        <Apply FunctionId="urn:oasis:names:tc:xacml:1.0:function:string-bag">
+          <AttributeValue DataType="http://www.w3.org/2001/XMLSchema#string">HRP_TSUPPORT</AttributeValue>
+        </Apply>
+        <AttributeValue DataType="http://www.w3.org/2001/XMLSchema#string">HRPCommon</AttributeValue>
+      </Apply>
+      <Apply FunctionId="urn:sberbank:names:hrp-authz:xacml:function:is-in-dyn-group">
+        <Apply FunctionId="urn:oasis:names:tc:xacml:1.0:function:integer-one-and-only">
+          <AttributeDesignator Category="urn:oasis:names:tc:xacml:1.0:subject-category:access-subject"
+                               AttributeId="urn:oasis:names:tc:xacml:1.0:subject:subject-id"
+                               DataType="http://www.w3.org/2001/XMLSchema#integer"
+                               MustBePresent="true"/>
+        </Apply>
+        <Apply FunctionId="urn:oasis:names:tc:xacml:1.0:function:string-bag">
+          <AttributeValue DataType="http://www.w3.org/2001/XMLSchema#string">COREUI_ADMIN</AttributeValue>
+        </Apply>
+        <AttributeValue DataType="http://www.w3.org/2001/XMLSchema#string">HRPLaunchpad</AttributeValue>
+      </Apply>
+    </Apply>
+  </VariableDefinition>
+ 
+  <Rule RuleId="permit-facade-flow-app-version-admin" Effect="Permit">
+    <Description>Разрешить доступ к админ плитке "КОДАДМИНКИ" в случае наличия групп</Description>
+    <Condition>
+      <VariableReference VariableId="is-allowed-by-group"/>
+    </Condition>
+    <AdviceExpressions>
+      <AdviceExpression AdviceId="showFlow" AppliesTo="Permit">
+        <AttributeAssignmentExpression AttributeId="urn:sberbank:names:hrp-admin:xacml:data:flow-code">
+          <AttributeValue DataType="http://www.w3.org/2001/XMLSchema#string">"КОДАДМИНКИ"</AttributeValue>
+        </AttributeAssignmentExpression>
+      </AdviceExpression>
+    </AdviceExpressions>
+  </Rule>
+ 
+</Policy>
