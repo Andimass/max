@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <Policy xmlns="urn:oasis:names:tc:xacml:3.0:core:schema:wd-17"
-        PolicyId="urn:sberbank:names:hrp-admin:xacml:policy:facade:flows:"КОДАДМИНКИ"
+        PolicyId="urn:sberbank:names:hrp-admin:xacml:policy:facade:flows:КОДАДМИНКИ"
         RuleCombiningAlgId="urn:oasis:names:tc:xacml:1.0:rule-combining-algorithm:deny-overrides" Version="1.0">
  
-  <Description>Пользователи с ролями HRP_TSUPPORT, COREUI_ADMIN могут видеть админ плитку "КОДАДМИНКИ"</Description>
+  <Description>Пользователи с ролями PAYROLL_SUPPORT, PAYROLL_ADMIN могут видеть админ плитку "КОДАДМИНКИ"</Description>
  
   <Target>
     <AnyOf>
@@ -29,9 +29,9 @@
                                MustBePresent="true"/>
         </Apply>
         <Apply FunctionId="urn:oasis:names:tc:xacml:1.0:function:string-bag">
-          <AttributeValue DataType="http://www.w3.org/2001/XMLSchema#string">HRP_TSUPPORT</AttributeValue>
+          <AttributeValue DataType="http://www.w3.org/2001/XMLSchema#string">PAYROLL_SUPPORT</AttributeValue>
         </Apply>
-        <AttributeValue DataType="http://www.w3.org/2001/XMLSchema#string">HRPCommon</AttributeValue>
+        <AttributeValue DataType="http://www.w3.org/2001/XMLSchema#string">REALM_REPORTS_TAX</AttributeValue>
       </Apply>
       <Apply FunctionId="urn:sberbank:names:hrp-authz:xacml:function:is-in-dyn-group">
         <Apply FunctionId="urn:oasis:names:tc:xacml:1.0:function:integer-one-and-only">
@@ -41,9 +41,9 @@
                                MustBePresent="true"/>
         </Apply>
         <Apply FunctionId="urn:oasis:names:tc:xacml:1.0:function:string-bag">
-          <AttributeValue DataType="http://www.w3.org/2001/XMLSchema#string">COREUI_ADMIN</AttributeValue>
+          <AttributeValue DataType="http://www.w3.org/2001/XMLSchema#string">PAYROLL_ADMIN</AttributeValue>
         </Apply>
-        <AttributeValue DataType="http://www.w3.org/2001/XMLSchema#string">HRPLaunchpad</AttributeValue>
+        <AttributeValue DataType="http://www.w3.org/2001/XMLSchema#string">REALM_REPORTS_TAX</AttributeValue>
       </Apply>
     </Apply>
   </VariableDefinition>
@@ -56,7 +56,7 @@
     <AdviceExpressions>
       <AdviceExpression AdviceId="showFlow" AppliesTo="Permit">
         <AttributeAssignmentExpression AttributeId="urn:sberbank:names:hrp-admin:xacml:data:flow-code">
-          <AttributeValue DataType="http://www.w3.org/2001/XMLSchema#string">"КОДАДМИНКИ"</AttributeValue>
+          <AttributeValue DataType="http://www.w3.org/2001/XMLSchema#string">КОДАДМИНКИ</AttributeValue>
         </AttributeAssignmentExpression>
       </AdviceExpression>
     </AdviceExpressions>
