@@ -1,104 +1,85 @@
-1. Структура создана
-sql
--- схема есть?
-SELECT schema_name FROM information_schema.schemata
-WHERE schema_name IN ('rnu_audit','rnu_setting');
+Блокер — нет доступа
 
--- таблицы на местах?
-SELECT table_schema, table_name
-FROM information_schema.tables
-WHERE table_name IN ('validation_check_list','validation_run','validation_result')
-ORDER BY 1,2;
+Пока не выдадут GRANT USAGE на rnu_audit, остальное проверить нельзя. Это первое, что надо запросить.
 
-Ожидаем: rnu_setting.validation_check_list, rnu_audit.validation_run, rnu_audit.validation_result.
+Пока ждёшь — подтверди, что схема и таблицы вообще созданы (системные каталоги видны без прав):
 
 sql
--- состав полей (сверить с моделью)
-SELECT table_schema, table_name, column_name, data_type, is_nullable
+SELECT c.relname
+FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+WHERE n.nspname = 'rnu_audit' AND c.relkind = 'r';
+
+Ожидаем validation_run и validation_result.
+
+Что проверить после выдачи прав
+
+1. Состав полей
+
+sql
+SELECT table_name, column_name, data_type, is_nullable
 FROM information_schema.columns
-WHERE table_name IN ('validation_check_list','validation_run','validation_result')
-ORDER BY table_schema, table_name, ordinal_position;
+WHERE table_schema = 'rnu_audit'
+ORDER BY table_name, ordinal_position;
 
-Смотри на то, что мы отмечали как проблемные: колонка table (зарезервированное слово — как в итоге назвали), is_active (должен быть NOT NULL), FK на реестр (code varchar(25), не uuid).
+Смотри на наши замечания: как назвали колонку вместо зарезервированного table, тип FK на реестр (должен быть varchar(25) на code, не uuid).
 
-2. Реестр заполнен
+2. Триггер отработал — прогоны создаются
+
 sql
-SELECT * FROM rnu_setting.validation_check_list ORDER BY code;
-
-Ожидаем 2001 (ALGORITHMIC, INCOME) и 2002 (LOGICAL, INCOME), обе is_active = true.
-
-3. Триггер отработал
-sql
-SELECT r.*, j.status AS job_status, j.report_type
+SELECT r.*, j.status AS job_status
 FROM rnu_audit.validation_run r
 JOIN rnu_report.job j ON j.id = r.job_id
-ORDER BY r.started_at DESC
-LIMIT 20;
+ORDER BY r.started_at DESC LIMIT 20;
 
-Проверяем: прогоны создаются, status доходит до DONE, заполнены started_at / finished_at / deviations_count.
+Ждём: записи есть, status доходит до DONE, заполнены started_at/finished_at/deviations_count.
 
-4. Главное — корректность самих проверок
-
-Это ядро приёмки. Считаем отклонения независимо и сравниваем с тем, что записала валидация. Подставь jobId из своей выборки:
+3. Главное — корректность проверок. Считаем эталон сами и сравниваем:
 
 sql
-WITH p AS (
-  SELECT id FROM rnu_report.job_period WHERE job_id = 'ПОДСТАВЬ_JOB_ID'
-),
--- эталон: считаем сами по спеке
-etalon AS (
-  SELECT i.id,
-         CASE WHEN i.tax_calculated <> ROUND(i.base_amount * i.tax_rate / 100) THEN 1 ELSE 0 END AS dev_2001,
-         CASE WHEN i.base_amount > i.income_amount THEN 1 ELSE 0 END AS dev_2002
-  FROM rnu_report.rnu_income i
-  WHERE i.job_period_id IN (SELECT id FROM p)
-)
-SELECT SUM(dev_2001) AS ожидаем_2001,
-       SUM(dev_2002) AS ожидаем_2002,
-       SUM(dev_2001 + dev_2002) AS ожидаем_всего
-FROM etalon;
+-- эталон
+SELECT
+  SUM(CASE WHEN i.tax_calculated <> ROUND(i.base_amount * i.tax_rate / 100) THEN 1 ELSE 0 END) AS ждём_2001,
+  SUM(CASE WHEN i.base_amount > i.income_amount THEN 1 ELSE 0 END) AS ждём_2002
+FROM rnu_report.rnu_income i
+JOIN rnu_report.job_period jp ON jp.id = i.job_period_id
+WHERE jp.job_id = 'JOB_ID';
 
-И что реально записала валидация:
-
-sql
-SELECT vr.validation_check_list_id AS check_code, COUNT(*) AS факт
+-- факт
+SELECT vr.validation_check_list_id AS код, COUNT(*) AS факт
 FROM rnu_audit.validation_result vr
 JOIN rnu_audit.validation_run r ON r.id = vr.validation_run_id
-WHERE r.job_id = 'ПОДСТАВЬ_JOB_ID'
-GROUP BY 1
-ORDER BY 1;
+WHERE r.job_id = 'JOB_ID'
+GROUP BY 1;
 
-Цифры должны совпасть. Если факт больше — где-то пишутся пройденные проверки (нарушение правила «только отклонения»). Если меньше — проверка не отрабатывает.
+Цифры должны сойтись. Больше — пишутся пройденные проверки; меньше — проверка не отрабатывает.
 
-5. Правило «пишем только отклонения»
+4. Счётчик и «только отклонения»
+
 sql
--- deviations_count должен равняться числу строк result
 SELECT r.id, r.deviations_count,
-       (SELECT COUNT(*) FROM rnu_audit.validation_result v WHERE v.validation_run_id = r.id) AS факт_строк
-FROM rnu_audit.validation_run r
-WHERE r.job_id = 'ПОДСТАВЬ_JOB_ID';
-6. Построчность и ссылочность
+       (SELECT COUNT(*) FROM rnu_audit.validation_result v WHERE v.validation_run_id = r.id) AS факт
+FROM rnu_audit.validation_run r WHERE r.job_id = 'JOB_ID';
+
+5. Ссылочность
+
 sql
--- каждая запись result должна ссылаться на существующую строку rnu_income
-SELECT COUNT(*) AS битых_ссылок
+SELECT COUNT(*) AS битых
 FROM rnu_audit.validation_result vr
 LEFT JOIN rnu_report.rnu_income i ON i.id = vr.table_entry_id
 WHERE i.id IS NULL;
 
-Ожидаем 0.
+Ждём 0.
 
-7. Округление — самый вероятный дефект
-
-Мы отдельно отмечали это как главный риск. Посмотри вручную несколько отклонений 2001:
+6. Округление — главный риск
 
 sql
-SELECT i.id, i.base_amount, i.tax_rate, i.tax_calculated,
+SELECT i.base_amount, i.tax_rate, i.tax_calculated,
        ROUND(i.base_amount * i.tax_rate / 100) AS расчёт,
        i.tax_calculated - ROUND(i.base_amount * i.tax_rate / 100) AS дельта
 FROM rnu_audit.validation_result vr
 JOIN rnu_report.rnu_income i ON i.id = vr.table_entry_id
 JOIN rnu_audit.validation_run r ON r.id = vr.validation_run_id
-WHERE r.job_id = 'ПОДСТАВЬ_JOB_ID' AND vr.validation_check_list_id = '2001'
+WHERE r.job_id = 'JOB_ID' AND vr.validation_check_list_id = '2001'
 LIMIT 20;
 
-Если у большинства дельта в пределах рубля — значит округление разъезжается, и это ложные срабатывания, а не реальные ошибки данных. Это дефект приёмки.
+Если у большинства дельта в пределах рубля — это ложные срабатывания, дефект.
