@@ -1,9 +1,104 @@
-SELECT j.id, j.report_type, j.status,
-       COALESCE(string_agg(DISTINCT x.state::text, ', '), 'нет XML') AS xml_states
-FROM rnu_report.job j
-LEFT JOIN rnu_report.job_period jp ON jp.job_id = j.id
-LEFT JOIN rnu_report.xml_file x ON x.job_period_id = jp.id
-WHERE j.status = 'DONE'
-GROUP BY j.id, j.report_type, j.status
-HAVING COALESCE(string_agg(DISTINCT x.state::text, ', '), '') !~ 'SEND_SUCCESS|SEND_PROCESSING'
-LIMIT 10;
+1. Структура создана
+sql
+-- схема есть?
+SELECT schema_name FROM information_schema.schemata
+WHERE schema_name IN ('rnu_audit','rnu_setting');
+
+-- таблицы на местах?
+SELECT table_schema, table_name
+FROM information_schema.tables
+WHERE table_name IN ('validation_check_list','validation_run','validation_result')
+ORDER BY 1,2;
+
+Ожидаем: rnu_setting.validation_check_list, rnu_audit.validation_run, rnu_audit.validation_result.
+
+sql
+-- состав полей (сверить с моделью)
+SELECT table_schema, table_name, column_name, data_type, is_nullable
+FROM information_schema.columns
+WHERE table_name IN ('validation_check_list','validation_run','validation_result')
+ORDER BY table_schema, table_name, ordinal_position;
+
+Смотри на то, что мы отмечали как проблемные: колонка table (зарезервированное слово — как в итоге назвали), is_active (должен быть NOT NULL), FK на реестр (code varchar(25), не uuid).
+
+2. Реестр заполнен
+sql
+SELECT * FROM rnu_setting.validation_check_list ORDER BY code;
+
+Ожидаем 2001 (ALGORITHMIC, INCOME) и 2002 (LOGICAL, INCOME), обе is_active = true.
+
+3. Триггер отработал
+sql
+SELECT r.*, j.status AS job_status, j.report_type
+FROM rnu_audit.validation_run r
+JOIN rnu_report.job j ON j.id = r.job_id
+ORDER BY r.started_at DESC
+LIMIT 20;
+
+Проверяем: прогоны создаются, status доходит до DONE, заполнены started_at / finished_at / deviations_count.
+
+4. Главное — корректность самих проверок
+
+Это ядро приёмки. Считаем отклонения независимо и сравниваем с тем, что записала валидация. Подставь jobId из своей выборки:
+
+sql
+WITH p AS (
+  SELECT id FROM rnu_report.job_period WHERE job_id = 'ПОДСТАВЬ_JOB_ID'
+),
+-- эталон: считаем сами по спеке
+etalon AS (
+  SELECT i.id,
+         CASE WHEN i.tax_calculated <> ROUND(i.base_amount * i.tax_rate / 100) THEN 1 ELSE 0 END AS dev_2001,
+         CASE WHEN i.base_amount > i.income_amount THEN 1 ELSE 0 END AS dev_2002
+  FROM rnu_report.rnu_income i
+  WHERE i.job_period_id IN (SELECT id FROM p)
+)
+SELECT SUM(dev_2001) AS ожидаем_2001,
+       SUM(dev_2002) AS ожидаем_2002,
+       SUM(dev_2001 + dev_2002) AS ожидаем_всего
+FROM etalon;
+
+И что реально записала валидация:
+
+sql
+SELECT vr.validation_check_list_id AS check_code, COUNT(*) AS факт
+FROM rnu_audit.validation_result vr
+JOIN rnu_audit.validation_run r ON r.id = vr.validation_run_id
+WHERE r.job_id = 'ПОДСТАВЬ_JOB_ID'
+GROUP BY 1
+ORDER BY 1;
+
+Цифры должны совпасть. Если факт больше — где-то пишутся пройденные проверки (нарушение правила «только отклонения»). Если меньше — проверка не отрабатывает.
+
+5. Правило «пишем только отклонения»
+sql
+-- deviations_count должен равняться числу строк result
+SELECT r.id, r.deviations_count,
+       (SELECT COUNT(*) FROM rnu_audit.validation_result v WHERE v.validation_run_id = r.id) AS факт_строк
+FROM rnu_audit.validation_run r
+WHERE r.job_id = 'ПОДСТАВЬ_JOB_ID';
+6. Построчность и ссылочность
+sql
+-- каждая запись result должна ссылаться на существующую строку rnu_income
+SELECT COUNT(*) AS битых_ссылок
+FROM rnu_audit.validation_result vr
+LEFT JOIN rnu_report.rnu_income i ON i.id = vr.table_entry_id
+WHERE i.id IS NULL;
+
+Ожидаем 0.
+
+7. Округление — самый вероятный дефект
+
+Мы отдельно отмечали это как главный риск. Посмотри вручную несколько отклонений 2001:
+
+sql
+SELECT i.id, i.base_amount, i.tax_rate, i.tax_calculated,
+       ROUND(i.base_amount * i.tax_rate / 100) AS расчёт,
+       i.tax_calculated - ROUND(i.base_amount * i.tax_rate / 100) AS дельта
+FROM rnu_audit.validation_result vr
+JOIN rnu_report.rnu_income i ON i.id = vr.table_entry_id
+JOIN rnu_audit.validation_run r ON r.id = vr.validation_run_id
+WHERE r.job_id = 'ПОДСТАВЬ_JOB_ID' AND vr.validation_check_list_id = '2001'
+LIMIT 20;
+
+Если у большинства дельта в пределах рубля — значит округление разъезжается, и это ложные срабатывания, а не реальные ошибки данных. Это дефект приёмки.
