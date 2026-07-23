@@ -1,10 +1,9 @@
-Андрей, привет!
-
-По задаче HRPY-25121 (удаление XML-файла из ФП НДФЛ): мы добавляем новый метод, который пойдёт через СОВУ — `DELETE /ndfl_form/{ndflFormId}` (удаление ПНФ в ФП НДФЛ). Сейчас через СОВУ у нас идёт только отправка (`POST /ndfl_form`) по CR HRPY-16824.
-
-Подскажи, пожалуйста:
-1. Нужен ли новый CR на СОВУ под этот метод, или достаточно расширить действующий HRPY-16824?
-2. Что нужно передать с нашей стороны, чтобы запрос на удаление прошёл вашу валидацию (схемы запроса/ответа, что-то ещё)?
-3. Сертификаты и настройки взаимодействия у нас уже прописаны по отправке — под новый метод нужно ли что-то дополнительно?
-
-Метод синхронный, один файл — один запрос, контракт — по спеке ФП НДФЛ «Метод удаления ПНФ». 
+SELECT j.id, j.report_type, j.status,
+       COALESCE(string_agg(DISTINCT x.state::text, ', '), 'нет XML') AS xml_states
+FROM rnu_report.job j
+LEFT JOIN rnu_report.job_period jp ON jp.job_id = j.id
+LEFT JOIN rnu_report.xml_file x ON x.job_period_id = jp.id
+WHERE j.status = 'DONE'
+GROUP BY j.id, j.report_type, j.status
+HAVING COALESCE(string_agg(DISTINCT x.state::text, ', '), '') !~ 'SEND_SUCCESS|SEND_PROCESSING'
+LIMIT 10;
