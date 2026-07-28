@@ -1,1 +1,1 @@
-copy "C:\Program Files\.gigacode\.install-dir" "%USERPROFILE%\.gigacode\.install-dir"
+set PATH=%PATH%;C:\Program Files\Python3145;C:\Program Files\Python3145\Scripts
