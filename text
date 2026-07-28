@@ -1,1 +1,1 @@
-set PATH=%PATH%;C:\Program Files\Python3145;C:\Program Files\Python3145\Scripts
+export PATH="/c/Program Files/Python3145:/c/Program Files/Python3145/Scripts:$PATH"
