@@ -1,2 +1,1 @@
-echo 'export UV_PYTHON_INSTALL_DIR="/c/Users/23734065/.python"' >> ~/.bashrc
-source ~/.bashrc
+export PATH="/c/Program Files/Python3145:/c/Program Files/Python3145/Scripts:$PATH"
