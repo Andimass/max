@@ -1,0 +1,88 @@
+# Change: Добавить проверку 2003 «вычет > доход»
+
+> **Статус**: На согласовании
+> **Дата**: 2026-07-30
+> **Целевая спецификация**: `openspec/specs/app-payroll-reports-tax/app-payroll-reports-tax.md`
+
+---
+
+## Что сделать
+
+Добавить проверку 2003 в `RnuValidationServiceImpl`. При превышении суммы вычета над суммой дохода по операции — записывать отклонение в `validation_result`.
+
+---
+
+## 1. SQL-миграция
+
+```sql
+INSERT INTO rnu_setting.validation_check_list (code, name, type, block, description, is_active)
+VALUES ('2003', 'вычет > доход', 'LOGICAL', 'DEDUCTION',
+        'При сумме налогового вычета, превышающей сумму дохода по операции, фиксируется ошибка E',
+        true)
+ON CONFLICT (code) DO UPDATE
+SET name = EXCLUDED.name, type = EXCLUDED.type, block = EXCLUDED.block,
+    description = EXCLUDED.description, is_active = EXCLUDED.is_active;
+```
+
+---
+
+## 2. Изменения кода
+
+### 2.1. `RnuValidationServiceImpl`
+
+**Новый приватный метод:**
+
+```
+check2003(RnuIncome income, RnuDeduction deduction):
+  - deduction.amount IS NULL  → return false
+  - income.incomeAmount IS NULL → return false
+  - return deduction.amount.compareTo(income.incomeAmount) > 0
+```
+
+**Расширить `executeValidationRun`:**
+
+После загрузки `List<RnuIncome> incomes` для каждого `jobPeriodId`:
+1. Собрать `incomeIds` из `incomes`.
+2. Загрузить вычеты: `rnuDeductionCustomRepository.findByJobPeriodIdAndIncomeIds(jobPeriodId, incomeIds)`.
+3. Для каждой `deduction`:
+   - Найти `income` по `deduction.incomeId` (использовать `Map<UUID, RnuIncome>` для O(1)).
+   - Если income не найден — пропустить.
+   - Для каждой активной проверки 2003 вызвать `check2003(income, deduction)` и при `true` записать `ValidationResult`.
+
+**Расширить `isDeviation`:**
+
+Добавить перегрузку или второй метод — `check2003(RnuIncome, RnuDeduction)` — вызывается в отдельном цикле по вычетам после цикла по доходам. Не смешивать в одном `switch` — у income-проверок (2001, 2002) и deduction-проверки (2003) разные входные данные.
+
+### 2.2. Структура цикла (псевдокод)
+
+```
+for jobPeriodId:
+  incomes = rnuIncomeRepository.findByJobPeriodId(jobPeriodId)
+  incomeById = incomes.stream().collect(toMap(RnuIncome::getId, identity))
+  incomeIds = incomes.map(RnuIncome::getId)
+
+  deductions = rnuDeductionRepository.findByJobPeriodIdAndIncomeIds(jobPeriodId, incomeIds)
+
+  for income in incomes:
+    for check in activeChecks:
+      if check.code == "2001": check2001(income) → saveResult()
+      if check.code == "2002": check2002(income) → saveResult()
+
+  for deduction in deductions:
+    income = incomeById.get(deduction.incomeId)
+    if income == null: continue
+    for check in activeChecks:
+      if check.code == "2003": check2003(income, deduction) → saveResult()
+```
+
+---
+
+## 3. Что должно получиться
+
+| Вход | Ожидаемый результат |
+|------|---------------------|
+| `deduction.amount > income.incomeAmount` | `ValidationResult` с `validationCheckCode="2003"`, `table=rnu_deduction`, `tableEntryId=deduction.id` |
+| `deduction.amount <= income.incomeAmount` | ничего |
+| `deduction.amount IS NULL` | ничего |
+| `income_id` в deduction не ссылается на существующий income | ничего |
+| Несколько deduction на один income | отдельный результат для каждого |
