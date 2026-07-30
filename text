@@ -1,1 +1,5 @@
-export PATH="/c/Program Files/Python3145:/c/Program Files/Python3145/Scripts:$PATH"
+native-tls = true
+
+[[index]]
+url = "https://token:ВАШ_НОВЫЙ_ТОКЕН@sberosc.sigma.sbrf.ru/repo/pypi/simple"
+default = true
