@@ -1,5 +1,20 @@
-native-tls = true
+Запиши в него настройки:
+echo "alias uv='/c/Users/23734065/.uv/bin/uv'" >> .bashrc  
+echo 'export UV_PYTHON_INSTALL_DIR="/c/Users/23734065/.python"' >> .bashrc
+echo 'export PATH="/c/Program Files/Python3145:$PATH"' >> .bashrc
+Примени: source .bashrc
+Проверка из гайда: uv
+Убедись, что UV реально лежит там, куда указывает alias:
+ls "/c/Users/23734065/.uv/bin/"
+Если там есть uv или uv.exe — всё верно. Если папки bin нет (при установке через --target структура иногда другая) — найди бинарник:
+ls -R "/c/Users/23734065/.uv/" | grep -i uv
+и поправь путь в alias на фактический.
+Чтобы закрепить навсегда, запиши настройки в .bashrc (тот source падал, потому что файла не было — создадим):
 
-[[index]]
-url = "https://token:ВАШ_НОВЫЙ_ТОКЕН@sberosc.sigma.sbrf.ru/repo/pypi/simple"
-default = true
+touch .bashrc
+echo "alias uv='/c/Users/23734065/.uv/bin/uv'" >> .bashrc
+echo 'export UV_PYTHON_INSTALL_DIR="/c/Users/23734065/.python"' >> .bashrc
+source .bashrc
+
+Проверка, что закрепилось: закрой GitBash, открой заново, набери:
+uv --version
