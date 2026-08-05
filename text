@@ -1,4 +1,731 @@
-Д1 — UUID.randomUUID() при каждой отправке. Это свойство самого кода: новый идентификатор на повторе не может быть распознан как тот же. Никакая информация из Confluence этого не отменяет.
-Д11 — повторный запуск валидации создаёт новый validation_run, значит новый source_event_id. Если так, критерий «тот же run.id» описывает несуществующий случай. Оговорка: если повторный запуск переиспользует запись прогона — я неправа, и это надо просто проверить.
-Д10 — 404 в алгоритме не обработан. Это видно по тексту: ветки есть на 200, 400/422, 401, 500.
-Д12 — статусов из Kafka в ТЗ нет ни разу, а в задаче они названы. Либо их сознательно вынесли, либо забыли.
+# Техническое задание: Интеграция с сервисом Валидация (HRPY-25913)
+
+> **Дата**: 2026-08-05
+> **Jira**: HRPY-25913 — SA. Взаимодействие с сервисом Валидация
+> **Статус**: Готов к реализации
+
+---
+
+## 1. Цель задачи
+
+Реализовать отправку результатов контрольных проверок (отклонений), выявленных в ReportsTax, в сервис `Payroll.Validator` для регистрации задач на исправление в Диспетчере Кадровых Задач (ДКЗ).
+
+---
+
+## 2. Исходные данные
+
+### 2.1. Текущее состояние
+
+**Что уже есть в проекте:**
+- `ValidationRun` — сущность прогона валидации (id, jobId, status, startedAt, finishedAt, deviationsCount)
+- `ValidationResult` — сущность отклонения (id, validationRunId, validationCheckCode, table, tableEntryId, personId, doId)
+- `ValidationCheckList` — справочник проверок (code, name, type, block, description, isActive)
+- `RnuValidationServiceImpl` — логика выполнения валидации: выбирает активные проверки, обходит `rnu_income`, фиксирует отклонения
+- `JobPersonService` — маппинг `doId → personId` для job
+- Паттерн интеграции `integrations/fp_ndfl/` — config, dto, service, impl
+
+**Что нужно добавить:**
+- Отправку отклонений из `ValidationResult` в сервис Валидация
+- Маппинг внутренних кодов проверок во внешние коды Валидатора
+- Аудит отправки через `validation_sending_log`
+
+---
+
+## 3. API контракта Payroll.Validator
+
+### 3.1. Метод и адрес
+
+```
+POST /api/v1/deviations
+Content-Type: application/json
+Accept: application/json
+Authorization: Bearer <token>
+```
+
+### 3.2. Тело запроса
+
+| Поле | Тип | Обязательность | Описание | Пример |
+|------|-----|----------------|----------|--------|
+| `company_id` | string | ✅ Обязательное | Код компании, передаётся Бизнес-сервисом | `PAOSberbank` |
+| `source_event_id` | string (uuid) | ✅ Обязательное | Идентификатор события на стороне источника. Используется для идемпотентности. | `c3d5e8f4-9b2a-4e7c-a1d4-3e5f6a7b8c92` |
+| `occurred_at` | string (datetime, ISO 8601) | ✅ Обязательное | Дата и время обнаружения отклонения | `2026-04-24T15:12:55.669Z` |
+| `event_reason` | string | ❌ Опциональное | Название события на стороне БС | `"регламентная проверка отчета"` |
+| `key_date` | string (date) | ❌ Опциональное | Дата, к которой должны быть исправлены отклонения (влияет на SLA ДКЗ) | `"2026-07-30"` |
+| `data[]` | array | ❌ Опциональное | Массив контекстных атрибутов | — |
+| `data[].element_code` | string | ✅ Внутри data | Имя атрибута | `"period"` |
+| `data[].value` | string | ✅ Внутри data | Значение атрибута | `"01.01.2026"` |
+| `data[].descr` | string | ❌ Внутри data | Человекочитаемое описание | `"Период:"` |
+| `deviations[]` | array | ✅ Обязательное (мин. 1 элемент) | Список отклонений | — |
+| `deviations[].source_deviation_id` | string (uuid) | ✅ Обязательное | Идентификатор отклонения, генерируется БС на каждый элемент | `d4e5f6a7-8b9c-4d1e-a2f3-b4c5d6e7f8a9` |
+| `deviations[].validation_business_code` | string | ✅ Обязательное | Код ошибки на стороне Бизнес-сервиса (внешний, из validation_matrix) | `"V_001"` |
+| `deviations[].message` | string | ❌ Опциональное | Описание отклонения | `"В сервисе Первичные данные отсутствуют банковские реквизиты физлица"` |
+| `deviations[].do_id` | string (uuid) | ❌ Опциональное | Идентификатор договорных отношений | `89d4202e-b7c4-49b4-910e-0dd616073d7e` |
+| `deviations[].person_id` | string (uuid) | ❌ Опциональное | Идентификатор сотрудника | `eae56ae1-3113-4abc-bef3-8ba61e27e83f` |
+
+### 3.3. Пример запроса (один source_event_id за прогон)
+
+```json
+[
+  {
+    "company_id": "PAOSberbank",
+    "source_event_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+    "occurred_at": "2026-08-05T10:30:00.000Z",
+    "event_reason": "регламентная проверка РНУ НДФЛ",
+    "key_date": "2026-07-31",
+    "data": [
+      {
+        "element_code": "period",
+        "value": "Q3-2026",
+        "descr": "Период:"
+      },
+      {
+        "element_code": "type_report",
+        "value": "2-НДФЛ",
+        "descr": "Тип отчёта:"
+      }
+    ],
+    "deviations": [
+      {
+        "source_deviation_id": "d4e5f6a7-8b9c-4d1e-a2f3-b4c5d6e7f8a9",
+        "validation_business_code": "V_001",
+        "message": "Отчет UUID, Тип 2-НДФЛ, Период Q3-2026",
+        "do_id": "89d4202e-b7c4-49b4-910e-0dd616073d7e",
+        "person_id": "eae56ae1-3113-4abc-bef3-8ba61e27e83f"
+      },
+      {
+        "source_deviation_id": "f1a2b3c4-5d6e-4f7a-8b9c-0d1e2f3a4b5c",
+        "validation_business_code": "V_002",
+        "message": "Отчет UUID, Тип 2-НДФЛ, Период Q3-2026"
+      }
+    ]
+  }
+]
+```
+
+**Важно:**
+- Запрос — **array событий**, но для нашей задачи — **один source_event_id = один validation_run**
+- `company_id` берём из `job.company_id` (из Job entity)
+- `data[]` — минимум: period (квартал) + type_report (2-НДФЛ)
+- `source_event_id` — это `validation_run.id` (для идемпотентности)
+
+### 3.4. Ответ (HTTP 200 OK)
+
+| Поле | Тип | Описание |
+|------|-----|----------|
+| `task_id` | string (uuid) | Единый идентификатор задачи для всего запроса |
+| `events[]` | array | Результаты обработки событий |
+| `events[].source_event_id` | string (uuid) | Идентификатор события (тот, что прислал бизнес-сервис) |
+| `events[].deviations[]` | array | Результаты обработки отклонений |
+| `events[].deviations[].source_deviation_id` | string (uuid) | ID отклонения, присланный бизнес-сервисом |
+| `events[].deviations[].validation_business_code` | string | Код проверки, полученный в запросе |
+| `events[].deviations[].match_status` | enum | **FOUND** — код найден, задача будет создана в ДКЗ; **NOT_FOUND** — код не найден в матрице |
+
+**Пример ответа:**
+
+```json
+{
+  "task_id": "e7f1a2b3-4c5d-4e6f-8a9b-0c1d2e3f4a5b",
+  "events": [
+    {
+      "source_event_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+      "deviations": [
+        {
+          "source_deviation_id": "d4e5f6a7-8b9c-4d1e-a2f3-b4c5d6e7f8a9",
+          "validation_business_code": "V_001",
+          "match_status": "FOUND"
+        },
+        {
+          "source_deviation_id": "f1a2b3c4-5d6e-4f7a-8b9c-0d1e2f3a4b5c",
+          "validation_business_code": "V_002",
+          "match_status": "NOT_FOUND"
+        }
+      ]
+    }
+  ]
+}
+```
+
+### 3.5. Ошибки
+
+| HTTP статус | Код ошибки | Описание | Причина |
+|-------------|-----------|----------|---------|
+| 400 | MISSING_REQUIRED_FIELD | Отсутствует обязательное поле | Не заполнено одно из обязательных полей запроса |
+| 400 | INVALID_FIELD_FORMAT | Некорректный формат поля | Значение поля не соответствует ожидаемому формату |
+| 401 | UNAUTHORIZED | Ошибка авторизации | Токен отсутствует, просрочен или невалиден |
+| 404 | VALIDATION_BUSINESS_CODE_NOT_FOUND | Код ошибки не найден | `validation_business_code` не зарегистрирован в validation_matrix для данного businessService |
+| 500 | INTERNAL_ERROR | Внутренняя ошибка сервиса | Непредвиденная ошибка на стороне Payroll.Validator |
+
+---
+
+## 4. Изменения в Базе Данных
+
+### 4.1. Таблица validation_matrix
+
+**Файл:** `src/main/resources/db/changelog/v1.0.0/20260803-01-create-validation-matrix.sql`
+
+**Назначение:** Связывает внутренние коды проверок ReportsTax с внешними кодами Валидатора.
+
+```sql
+CREATE TABLE IF NOT EXISTS rnu_setting.validation_matrix (
+    internal_code       VARCHAR(25) PRIMARY KEY,  -- '2001', '2002', '2003' (из нашего реестра)
+    external_code       VARCHAR(20) NOT NULL,     -- 'V_001', 'V_002', 'V_003' (из контракта Валидатора)
+    business_service    VARCHAR(50) NOT NULL DEFAULT 'Payroll.ReportsTax',
+    is_active           BOOLEAN NOT NULL DEFAULT true,
+    created_at          TIMESTAMP NOT NULL DEFAULT now(),
+    updated_at          TIMESTAMP NOT NULL DEFAULT now()
+);
+
+-- Начальные данные маппинга
+INSERT INTO rnu_setting.validation_matrix (internal_code, external_code) VALUES
+    ('2001', 'V_001'),
+    ('2002', 'V_002'),
+    ('2003', 'V_003')
+ON CONFLICT (internal_code) DO UPDATE SET
+    external_code = EXCLUDED.external_code,
+    is_active = EXCLUDED.is_active,
+    updated_at = now();
+
+CREATE INDEX idx_vm_code ON rnu_setting.validation_matrix(internal_code);
+CREATE INDEX idx_vm_service ON rnu_setting.validation_matrix(business_service, is_active);
+```
+
+**Данные:**
+
+| internal_code | external_code | business_service | is_active |
+|---------------|---------------|------------------|-----------|
+| 2001 | V_001 | Payroll.ReportsTax | true |
+| 2002 | V_002 | Payroll.ReportsTax | true |
+| 2003 | V_003 | Payroll.ReportsTax | true |
+
+> **Важно:** Если внутренний код не найден в `validation_matrix` — отклонение **не отправляется**, логируется ошибка `VALIDATION_BUSINESS_CODE_NOT_FOUND`.
+
+### 4.2. Таблица validation_sending_log
+
+**Файл:** `src/main/resources/db/changelog/v1.0.0/20260803-02-create-validation-sending-log.sql`
+
+**Назначение:** Аудит отправки — что, кому, когда и с каким статусом было отправлено.
+
+```sql
+CREATE TABLE rnu_audit.validation_sending_log (
+    id                     UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    validation_run_id      UUID    NOT NULL REFERENCES rnu_audit.validation_run(id),
+    validator_task_id      UUID,                 -- returned task_id от Валидатора
+    source_event_id        UUID,                 -- наш source_event_id для идемпотентности
+    batch_size             INT,                  -- кол-во отклонений в батче
+    http_status            SMALLINT,             -- статус ответа Валидатора (200, 400...)
+    error_code             VARCHAR(50),          -- код ошибки Валидатора
+    match_found_cnt        INT DEFAULT 0,        -- кол-во FOUND
+    match_not_found_cnt    INT DEFAULT 0,        -- кол-во NOT_FOUND
+    sent_at                TIMESTAMP NOT NULL DEFAULT now(),
+    raw_response           JSONB,                -- полный ответ для отладки
+    status                 VARCHAR(20) NOT NULL DEFAULT 'SENT', -- SENT, FAILED, RETRY_NEEDED
+    company_id             VARCHAR(50)           -- код компании для быстрого поиска
+);
+
+CREATE INDEX idx_vsl_run ON rnu_audit.validation_sending_log(validation_run_id);
+CREATE INDEX idx_vsl_event ON rnu_audit.validation_sending_log(source_event_id);
+CREATE INDEX idx_vsl_status ON rnu_audit.validation_sending_log(status);
+```
+
+**Возможные статусы:**
+
+| Статус | Описание |
+|--------|----------|
+| `SENT` | Успешно отправлено (HTTP 200) |
+| `FAILED` | Ошибка (400, 422 — не повторяем) |
+| `RETRY_NEEDED` | Временная ошибка (401, 500 — retry) |
+
+---
+
+## 5. Алгоритм отправки
+
+### 5.1. Логика маппинга кодов
+
+```
+1. Получить validation_check_code из ValidationResult (напр., '2003')
+2. Запросить rnu_setting.validation_matrix WHERE internal_code = '2003'
+3. Если external_code найден → использовать в deviations[].validation_business_code
+4. Если external_code НЕ найден → 
+   - Логировать: "VALIDATION_BUSINESS_CODE_NOT_FOUND for code=2003"
+   - Пропустить отклонение (не отправлять)
+```
+
+### 5.2. Разрешение person_id и do_id
+
+**do_id:**
+- Берётся напрямую из `validation_result.do_id`
+- Если `null` — не передаётся в запросе (поле опциональное)
+
+**person_id:**
+```
+1. Если validation_result.person_id != null → использовать его
+2. Если null → ищем в JobPerson:
+   - JobPersonService.findJobPersonsByJobId(jobId)
+   - Фильтруем по do_id (validation_result.do_id)
+   - Получаем person_id
+3. Если всё ещё null → 
+   - Логируем WARNING: "person_id not resolved for do_id={do_id}"
+   - Отправляем отклонение без person_id (поле опциональное)
+```
+
+> **Важно:** person_id — опциональное поле в контракте. Отклонение отправляется даже если person_id не найден. Логируется только WARNING.
+
+### 5.3. Формирование message
+
+Формат сообщения:
+```
+"Отчет: {jobId}, Тип: 2-НДФЛ, Период: {period}"
+```
+
+Пример:
+```
+"Отчет: a1b2c3d4-e5f6-7890, Тип: 2-НДФЛ, Период: Q3-2026"
+```
+
+### 5.4. Формирование data[] (контекстные атрибуты)
+
+```json
+[
+  {
+    "element_code": "period",
+    "value": "Q3-2026",
+    "descr": "Период:"
+  },
+  {
+    "element_code": "type_report",
+    "value": "2-НДФЛ",
+    "descr": "Тип отчёта:"
+  }
+]
+```
+
+### 5.5. Полный алгоритм отправки
+
+```
+ValidatorDeviationSenderService.sendUnsentResults(validationRunId):
+  
+  1. Загрузка данных прогона:
+     - ValidationRun run = findRunById(validationRunId)
+     - UUID jobId = run.getJobId()
+     - Job job = jobRepository.findById(jobId)
+     - String companyId = job.getCompanyId()
+     - JobPeriod period = jobPeriodService.getPeriodByJobId(jobId)
+  
+  2. Загрузка неотправленных отклонений:
+     - List<ValidationResult> unsentResults = findUnsentByRunId(validationRunId)
+     - Если пустой → return (nothing to send)
+  
+  3. Сбор отклонений в deviations array:
+     - deviations = []
+     - для каждого result в unsentResults:
+       a. externalCode = mappingRepository.getExternalCode(result.getValidationCheckCode())
+       b. Если externalCode == null → логировать, пропустить
+       c. personId = resolvePersonId(result, jobId)
+       d. deviation = {
+            source_deviation_id: UUID.randomUUID(),
+            validation_business_code: externalCode,
+            message: formatMessage(jobId, "2-НДФЛ", period),
+            do_id: result.getDoId(),
+            person_id: personId
+          }
+       e. deviations.add(deviation)
+  
+  4. Если deviations пустой → return (все пропущены из-за отсутствия маппинга)
+  
+  5. Формирование запроса:
+     - request = {
+         company_id: companyId,
+         source_event_id: validationRunId,
+         occurred_at: now().toString(ISO8601),
+         event_reason: "регламентная проверка РНУ НДФЛ",
+         key_date: job.getDeadline(),  // опционально
+         data: [
+           { element_code: "period", value: period, descr: "Период:" },
+           { element_code: "type_report", value: "2-НДФЛ", descr: "Тип отчёта:" }
+         ],
+         deviations: deviations
+       }
+  
+  6. HTTP POST к /api/v1/deviations:
+     - response = validatorApiClient.postDviations(request)
+     - status = response.getStatusCode()
+  
+  7. Обработка ответа:
+     Если status == 200:
+       - task_id = response.body.getTaskId()
+       - matchFound = count(response.events[0].deviations, match_status=FOUND)
+       - matchNotFound = count(response.events[0].deviations, match_status=NOT_FOUND)
+       - logSend(validationRunId, task_id, deviations.size(), 200, null, 
+                  matchFound, matchNotFound, response.body, "SENT", companyId)
+       
+     Если status == 400 или 422:
+       - error = response.body.errors[0].code
+       - logSend(validationRunId, null, deviations.size(), status, error, 0, 0, 
+                  response.body, "FAILED", companyId)
+       - return (не повторяем отправку)
+       
+     Если status == 404 (VALIDATION_BUSINESS_CODE_NOT_FOUND):
+       - Это бизнес-ошибка — хотя бы один deviation имеет код, не найденный в validation_matrix
+       - logSend(validationRunId, null, deviations.size(), 404, "VALIDATION_BUSINESS_CODE_NOT_FOUND", 0, 0, 
+                  response.body, "FAILED", companyId)
+       - return (не повторяем отправку)
+  
+  8. Обработка ошибок (retry):
+     Если status == 401:
+       - Обновить токен
+       - Retry (max 3 попытки, экспоненциальная задержка: 300ms, 600ms, 1200ms)
+       - Если все попытки исчерпаны → logSend(..., "RETRY_NEEDED")
+     
+     Если status == 500:
+       - Retry (max 3 попытки, экспоненциальная задержка)
+       - Если все попытки исчерпаны → logSend(..., "RETRY_NEEDED")
+  
+  9. Пометить отклонения как отправленные:
+     - Для каждого отклонения:
+       - Создать запись в validation_sending_log
+       - Или пометить в validationResult (field: sent = true)
+```
+
+---
+
+## 6. Структура DTO
+
+### 6.1. Запрос к Валидатору
+
+```java
+// integrations/validator/dto/ValidatorDeviationRequest.java
+public record ValidatorDeviationRequest(
+    String company_id,
+    String source_event_id,
+    String occurred_at,
+    String event_reason,
+    String key_date,
+    List<SourceDataItem> data,
+    List<DeviationItem> deviations
+) {}
+
+// integrations/validator/dto/SourceDataItem.java
+public record SourceDataItem(
+    String element_code,
+    String value,
+    String descr
+) {}
+
+// integrations/validator/dto/DeviationItem.java
+public record DeviationItem(
+    String source_deviation_id,
+    String validation_business_code,
+    String message,
+    String do_id,
+    String person_id
+) {}
+```
+
+### 6.2. Ответ от Валидатора
+
+```java
+// integrations/validator/dto/ValidatorApiResponse.java
+public record ValidatorApiResponse(
+    String task_id,
+    List<EventResult> events
+) {}
+
+// integrations/validator/dto/EventResult.java
+public record EventResult(
+    String source_event_id,
+    List<DeviationResult> deviations
+) {}
+
+// integrations/validator/dto/DeviationResult.java
+public record DeviationResult(
+    String source_deviation_id,
+    String validation_business_code,
+    String match_status  // "FOUND" или "NOT_FOUND"
+) {}
+```
+
+### 6.3. Ошибка от Валидатора
+
+```java
+// integrations/validator/dto/ValidationError.java
+public record ValidationError(
+    String code,
+    String message
+) {}
+
+// integrations/validator/dto/ValidatorErrorResponse.java
+public record ValidatorErrorResponse(
+    List<ValidationError> errors
+) {}
+```
+
+---
+
+## 7. Что должно получиться в коде
+
+### 7.1. SQL-миграции
+
+- `src/main/resources/db/changelog/v1.0.0/20260803-01-create-validation-matrix.sql`
+- `src/main/resources/db/changelog/v1.0.0/20260803-02-create-validation-sending-log.sql`
+
+### 7.2. Entity
+
+- `entity/ValidationSendingLog.java` — сущность для таблицы `rnu_audit.validation_sending_log`
+
+### 7.3. Repository
+
+- `repository/ValidationSendingLogRepository.java`
+  - `void saveLog(ValidationSendingLog log);`
+  - `List<ValidationResult> findUnsentResultsByRunId(UUID runId);`
+- `repository/custom/ValidationMatrixCustomRepository.java`
+  - `String getExternalCode(String internalCode);`
+  - `Map<String, String> getAllActiveMappings();`
+
+### 7.4. Интеграция: integrations/validator/
+
+```
+integrations/validator/
+├── ValidatorApiClient.java          — REST-клиент для POST /api/v1/deviations
+├── ValidatorApiConfig.java          — Конфигурация Feign/RestTemplate, таймауты
+└── dto/
+    ├── ValidatorDeviationRequest.java
+    ├── SourceDataItem.java
+    ├── DeviationItem.java
+    ├── ValidatorApiResponse.java
+    ├── EventResult.java
+    ├── DeviationResult.java
+    ├── ValidatorErrorResponse.java
+    └── ValidationError.java
+```
+
+### 7.5. Сервис
+
+- `service/rnu_ndfl/impl/ValidatorDeviationSenderService.java`
+  - `void sendUnsentResults(UUID validationRunId);`
+  - Собирает "неотправленные" отклонения
+  - Делает маппинг кодов через `validation_matrix`
+  - Разрешает person_id через JobPersonService
+  - Формирует DTO и вызывает API Валидатора
+  - Обрабатывает ответы и ошибки
+  - Сохраняет аудит в `validation_sending_log`
+
+### 7.6. Изменение в RnuValidationServiceImpl
+
+- В методе `completeValidationRun()` (после статуса DONE):
+  ```java
+  completeValidationRun(validationRunId, totalDeviations, null);
+  
+  // === НОВАЯ СТРОКА ===
+  validatorDeviationSenderService.sendUnsentResults(validationRunId);
+  ```
+
+### 7.7. application.yml — новый профиль
+
+```yaml
+integrations:
+  validator:
+    url: ${VALIDATOR_API_URL:https://hr-dev.sberbank.ru/api}
+    connect-timeout: 5000
+    read-timeout: 50000
+    max-retries: 3
+    retry-delay: 300
+```
+
+### 7.8. Enums
+
+- `enumeration/ValidationSendingStatusEnum.java` — `SENT, FAILED, RETRY_NEEDED`
+
+---
+
+## 8. Критерии приёмки
+
+| # | Сценарий | Ожидаемый результат |
+|---|----------|---------------------|
+| 1 | Есть отклонения по 2003, маппинг в validation_matrix настроен | Запрос успешно отправлен, в лог записан task_id, status = SENT |
+| 2 | Маппинга нет (в таблице пусто для кода 2001) | Отклонение не отправлено, ошибка логируется, прогон завершается успешно |
+| 3 | Отклонение пришло по данным из ЕАСУП | В Валидатор ушло событие, в message указано "ЕАСУП" |
+| 4 | person_id не найден | Отклонение отправлено (поле опциональное), логируется WARNING |
+| 5 | Повторный запуск валидации (новый validation_run) | Новый source_event_id, новый POST запрос. Валидатор обработает как новое событие. |
+| 6 | Валидатор вернул match_status: NOT_FOUND | Задача в ДКЗ не создалась, в validation_sending_log записан match_not_found_cnt > 0 |
+| 7 | Валидатор недоступен (HTTP 500) | Выполняется Retry с экспоненциальной задержкой (300ms, 600ms, 1200ms) |
+| 8 | Валидатор вернул HTTP 400 | Ошибка логируется, status = FAILED, повторной отправки не будет |
+| 9 | Валидатор вернул HTTP 404 | Код проверки не найден в validation_matrix, status = FAILED, повторной отправки не будет |
+
+---
+
+## 9. Зависимости между компонентами
+
+```
+RnuValidationServiceImpl
+    ├── ValidationRun (entity)
+    ├── ValidationResult (entity)
+    ├── ValidationCheckList (repository)
+    ├── RnuIncome (repository)
+    ├── JobPersonService
+    ├── JobPeriodService
+    └── ValidatorDeviationSenderService  ← новый
+    
+ValidatorDeviationSenderService
+    ├── ValidationSendingLog (entity, repository)  ← новый
+    ├── ValidationMatrixCustomRepository  ← новый
+    ├── JobRepository (для companyId, period)
+    ├── JobPersonService (разрешение person_id)
+    └── ValidatorApiClient  ← новый
+    
+ValidatorApiClient
+    ├── integrations/validator/dto/*
+    ├── RestTemplate / WebClient
+    ├── HttpHeaders (Authorization, Content-Type)
+    └── application.yml (integrations.validator.*)
+```
+
+---
+
+## 10. Примечания по реализации
+
+### 10.1. Retry-логика
+
+- Использовать Spring Retry (как в fp_ndfl)
+- Max retries: 3
+- Initial delay: 300ms
+- Multiplier: 2 (экспоненциальная: 300, 600, 1200)
+- Retry only для: 401 (UNAUTHORIZED), 500 (INTERNAL_ERROR)
+- НЕ retry для: 400, 404, 422 (ошибки валидации и кодов проверок)
+
+### 10.2. Идемпотентность
+
+> **Важно:** Идемпотентность через `source_event_id` НЕ ГАРАНТИРУЕТСЯ.
+> Каждый запуск `runValidation()` создаёт новый `ValidationRun` с новым UUID.
+> Повторный запуск = новый `source_event_id` = новый POST запрос к Валидатору.
+> 
+> Это поведение соответствует коду: `RnuValidationServiceImpl.runValidation()` создаёт `UUID.randomUUID()` для каждого прогона.
+> 
+> **`source_deviation_id`** также генерируется как `UUID.randomUUID()` при каждой отправке (раздел 6.1).
+
+### 10.3. Батчинг
+
+- Один validation_run = один POST запрос
+- Все отклонения одного run идут в одном body
+
+### 10.4. Асинхронность
+
+- `ValidatorDeviationSenderService.sendUnsentResults()` вызывается синхронно после `completeValidationRun()`
+- Можно сделать `@Async` при необходимости, но для MVP — синхронно
+
+### 10.5. Безопасность
+
+- Authorization: Bearer <token> — токен берётся из Secman (как для fp_ndfl)
+- SSL для connection к Валидатору (как для fp_ndfl)
+
+### 10.6. Логирование
+
+- INFO: "Sending deviations to Validator for runId={runId}, count={count}"
+- INFO: "Validator response: taskId={taskId}, found={found}, notFound={notFound}"
+- WARN: "Person ID not resolved for doId={doId}"
+- WARN: "External code not found for internal code={code}, skipping deviation"
+- ERROR: "Validator API error: status={status}, code={errorCode}, message={message}"
+
+---
+
+## 11. OpenAPI спецификация (если нужна)
+
+Если Валидатор ожидает OpenAPI-спецификацию для генерации клиента:
+
+```yaml
+openapi: 3.0.3
+info:
+  title: Payroll.Validator API
+  version: 1.0.0
+paths:
+  /api/v1/deviations:
+    post:
+      summary: Отправка отклонений
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              items:
+                $ref: '#/components/schemas/ValidatorDeviationRequest'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidatorApiResponse'
+        '400':
+          description: Bad Request
+        '401':
+          description: Unauthorized
+        '404':
+          description: Business code not found
+        '500':
+          description: Internal error
+components:
+  schemas:
+    ValidatorDeviationRequest:
+      type: object
+      required: [company_id, source_event_id, occurred_at, deviations]
+      properties:
+        company_id: { type: string }
+        source_event_id: { type: string, format: uuid }
+        occurred_at: { type: string, format: date-time }
+        event_reason: { type: string }
+        key_date: { type: string, format: date }
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/SourceDataItem' }
+        deviations:
+          type: array
+          minItems: 1
+          items: { $ref: '#/components/schemas/DeviationItem' }
+    SourceDataItem:
+      type: object
+      required: [element_code, value]
+      properties:
+        element_code: { type: string }
+        value: { type: string }
+        descr: { type: string }
+    DeviationItem:
+      type: object
+      required: [source_deviation_id, validation_business_code]
+      properties:
+        source_deviation_id: { type: string, format: uuid }
+        validation_business_code: { type: string }
+        message: { type: string }
+        do_id: { type: string, format: uuid }
+        person_id: { type: string, format: uuid }
+    ValidatorApiResponse:
+      type: object
+      properties:
+        task_id: { type: string, format: uuid }
+        events:
+          type: array
+          items: { $ref: '#/components/schemas/EventResult' }
+    EventResult:
+      type: object
+      properties:
+        source_event_id: { type: string, format: uuid }
+        deviations:
+          type: array
+          items: { $ref: '#/components/schemas/DeviationResult' }
+    DeviationResult:
+      type: object
+      properties:
+        source_deviation_id: { type: string, format: uuid }
+        validation_business_code: { type: string }
+        match_status: { type: string, enum: [FOUND, NOT_FOUND] }
+```
+
+---
+
+## 12. Ссылки
+
+- **Jira:** [HRPY-25913](https://jira.sberbank.ru/browse/HRPY-25913)
+- **Контракт API Валидатора:** [Confluence 24278738604](https://confluence.sberbank.ru/pages/viewpage.action?pageId=24278738604)
+- **Payroll.Validator (главная):** [Confluence 18641387682](https://confluence.sberbank.ru/pages/viewpage.action?pageId=18641387682)
+- **Реестр проверок:** [Confluence 24480582967](https://confluence.sberbank.ru/pages/viewpage.action?pageId=24480582967)
+- **РНУ НДФЛ (главная):** [Confluence 18725831995](https://confluence.sberbank.ru/pages/viewpage.action?pageId=18725831995)
+- **OpenSpec change:** `openspec/changes/hrpy-25913-validation-service-integration/change.md`
