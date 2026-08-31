@@ -1,17 +1,46 @@
-{
-  "header": { "calc_header_id": "uuid", "version": 1 },
-  "groups": [
-    {
-      "kpp": "770123456",
-      "oktmo": "45000000000",
-      "tax_hold": 1234.56,
-      "calculation_lines": [
-        { "person_id": "uuid", "do_id": "uuid", "date_for": "2026-01-01" }
-      ]
-    }
-  ],
-  "meta": {
-    "kp_codes": ["2001","2002","2003","2004"],
-    "result": "PASS",
-    "completed_at": "2026-08-11T10:00:00Z"
-  }
+ Шаг 1: Найти все таблицы валидации:
+
+     1 SELECT table_schema, table_name 
+     2 FROM information_schema.tables 
+     3 WHERE table_name LIKE '%validation%' OR table_name LIKE '%check%'; 
+    (Результат мы получили: `rnu_setting.validation_check_list`)
+
+    Шаг 2: Проверить, есть ли там данные (активные проверки):
+
+     1 SELECT * FROM rnu_setting.validation_check_list;
+    (Результат мы получили: коды 2001 и 2002 активны)
+
+    Шаг 3: Если получилась ошибка 25P02 (сбой транзакции):
+    Если после выполнения вышеуказанных команд PostgreSQL выдает ошибку current transaction is aborted, просто выполни:
+
+     1 ROLLBACK;
+
+    ---
+
+    2. Подготовка данных для теста (PostgreSQL)
+    Чтобы отправить запрос на API, нужен jobId со статусом DONE. 
+
+    Найти рабочий Job:
+
+     1 SELECT id, status, created_at 
+     2 FROM main.job 
+     3 WHERE status = 'DONE' 
+     4 ORDER BY created_at DESC 
+     5 LIMIT 1;
+    (Скопируй полученный ID)
+
+    ---
+
+    3. Проверка работы API (PowerShell)
+    Открой PowerShell в папке проекта и выполни эту команду (замени UUID на тот, что взял из предыдущего шага):
+
+     1 Invoke-WebRequest -Uri "http://localhost:8080/api/v1/rnu/validate" -Method Post -ContentType "application/json" -Body '{"jobId":"тут-твой-реальный-UUID"} 
+       '
+
+    Что это проверяет:
+    Если сервис настроен правильно (и вы исправили маппинг схемы rnu_audit на rnu_setting в коде), он вернет 200 OK и validationRunId. Если схема не исправлена  
+    — будет 500 Internal Server Error.
+
+    ---
+
+    Итог: Эта цепочка команд позволяет тебе в любой момент проверить, "жива" ли таблица проверок и работает ли ручка запуска валидации.
