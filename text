@@ -149,7 +149,62 @@ GET /api/v1/rnu/report/errors?jobId={uuid}&page={int}&size={int}
 
 ---
 
-# Часть 2. Алгоритм обработки
+# Часть 2. Как считается каждое поле макета
+
+Главное: ни одна сумма на экране не вычисляется из первичных данных. `rnu_income` и `rnu_deduction` — уже готовый результат расчёта, эндпоинт только агрегирует его (`SUM`).
+
+## Суммовые поля
+
+| Поле макета | Как получается | Колонка |
+|---|---|---|
+| доход | `SUM(income_amount)` | `rnu_income.income_amount` |
+| вычеты | `SUM(rnu_deduction.amount)` по `income_id` | `rnu_deduction.amount` |
+| НОБ | `SUM(base_amount)` | `rnu_income.base_amount` |
+| НДФЛ исчислен | `SUM(tax_calculated)` | `rnu_income.tax_calculated` |
+| НДФЛ удержан | `SUM(tax_hold)` | `rnu_income.tax_hold` |
+| итого за месяц | `SUM` уже агрегированных строк месяца | вычисляется |
+
+Все пять величин — реквизиты результата расчёта, переносятся в БД как есть (`ProcessRnuIncomeServiceImpl.buildRnuIncomeEntity`): `income_amount` ← `SummDohNach`, `base_amount` ← `NalBaza`, `tax_calculated` ← `Ni`, `tax_hold` ← `Nu`, `tax_rate` ← `Stavka`.
+
+### `base_amount` не равен `income_amount − deduction`
+
+НОБ берётся из расчёта отдельным реквизитом, а не вычитанием. Сходимость проверяет валидация: `BaseMismathFunction` сравнивает `base_amount` с `income_amount − deduction_sum` и при расхождении пишет отклонение с кодом 2004.
+
+Следствие для экрана: НОБ, не равный разности «доход − вычеты», — признак отклонения в расчёте, а не ошибка агрегации. Пересчитывать `base_amount` на бэкенде нельзя: карточка перестанет сходиться с отчётом и с результатами валидации.
+
+Аналогично `tax_calculated` и `tax_hold` — независимые реквизиты, не `base_amount × tax_rate`. Их сходимость проверяется отдельной функцией валидации.
+
+### Строки с нулевой суммой и без шкалы
+
+`FilterRnuResultSet.filterByPayTypeAndTaxScale` до записи в БД удаляет строки с `split_value_tax_scale = null` и с `amount = 0`. В `rnu_income` таких строк нет. Нулевая сумма в агрегате означает отсутствие строк, а не строку с нулём.
+
+## Счётчики физлиц
+
+| Поле макета | Как получается |
+|---|---|
+| всего (`total`) | `count(distinct person_id)` по `job_person` для `jobId` |
+| ошибочных (`failed`) | `count(distinct person_id)` по `validation_result` через `validation_run.job_id` |
+| успешных (`successful`) | `total − failed` |
+
+### `job_person` заполняется до формирования отчёта
+
+`RnuNdflJobPersonService.prepareJobPersonsAndStartReport`: сначала `INSERT` в `job_person` из ответа HcmDataMart, затем запуск расчёта. Строка `job_person` появляется раньше, чем результат по этому физлицу.
+
+Следствие: `total` — это «кого запросили к расчёту», а не «по кому отчёт сформировался». Физлицо может присутствовать в `job_person` и не иметь ни одной строки в `rnu_income`. Сейчас такое физлицо попадает в `successful`, потому что в `failed` его нет.
+
+Три варианта определения `total`, требующие решения:
+
+| Вариант | Источник | Смысл |
+|---|---|---|
+| A | `count(distinct person_id)` по `job_person` | кого запросили |
+| B | `count(distinct rnu_income.person_id)` через `job_period` | по кому получены доходы |
+| C | A, но физлица без строк в `rnu_income` — в отдельный показатель | разделяет «не рассчитан» и «рассчитан без ошибок» |
+
+Вариант B точнее по смыслу «по кому отчёт сформирован», но требует join `rnu_income → job_period → job`, так как `rnu_income` привязана к `job_period_id`, а не к `job_id`.
+
+---
+
+# Часть 3. Алгоритм обработки
 
 ## Эндпоинт статистики
 
@@ -167,7 +222,7 @@ GET /api/v1/rnu/report/errors?jobId={uuid}&page={int}&size={int}
 
 ### Шаг 3. `total`
 
-`count(distinct person_id)` по `job_person` для `jobId` — физлица, по которым отчёт сформирован.
+`count(distinct person_id)` по `job_person` для `jobId` — физлица, запрошенные к расчёту. `job_person` заполняется до формирования отчёта, поэтому `total` не равен числу физлиц с результатом; варианты определения — в части 2, раздел «Счётчики физлиц».
 
 **Поля:** `rnu_report.job_person` — `job_id`, `person_id`.
 
@@ -301,7 +356,7 @@ GET /api/v1/rnu/report/errors?jobId={uuid}&page={int}&size={int}
 | отчёт есть, валидация не запускалась | нет | нет |
 | отчёт есть, `validation_run.status = ERROR`, часть физлиц не проверена | нет | нет |
 
-Физлицо без сформированного отчёта отсутствует в `job_person` и в счёт не входит — ни в `total`, ни в `successful`, ни в `failed`.
+Физлицо без результата расчёта присутствует в `job_person` (запись создаётся до формирования отчёта) и не имеет ни одной строки в `rnu_income`. В `failed` оно не попадает, следовательно попадает в `successful`.
 
 `validation_run.status` принимает `ERROR`, поэтому третья строка не гипотетическая: непроверенные физлица попадают в `successful`. Требуется решение: принять это как есть или выводить непроверенных отдельным показателем.
 
@@ -315,7 +370,7 @@ GET /api/v1/rnu/report/errors?jobId={uuid}&page={int}&size={int}
 
 ---
 
-# Часть 3. Сводные материалы
+# Часть 4. Сводные материалы
 
 ## Ограничения схемы
 
